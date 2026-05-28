@@ -22,7 +22,7 @@ from models import (
     PurchaseOrder, POLineItem,
     Indent, IndentLineItem, IndentStatus,
     DeliveryChallan, CycleCount, CycleCountItem,
-    AuditLog, Notification, now_iso, gen_id,
+    AuditLog, Notification, StockMovement, now_iso, gen_id,
 )
 from auth_utils import (
     hash_password, verify_password, create_token,
@@ -82,31 +82,60 @@ async def get_hub_stock(product_id: str) -> int:
 
 
 async def adjust_stock(product_id: str, location_type: str, location_id: str, delta: int,
-                       reason: str = "", user_id: str = ""):
-    """Atomic stock adjustment. Creates row if absent."""
+                       reason: str = "", user_id: str = "", user_email: str = "",
+                       reference_type: str = "manual", reference_id: str = ""):
+    """Atomic stock adjustment. Creates row if absent. Writes immutable stock movement log."""
     existing = await db.stock.find_one(
         {"product_id": product_id, "location_type": location_type, "location_id": location_id},
         {"_id": 0},
     )
+    qty_before = int(existing["quantity"]) if existing else 0
+    new_qty = max(0, qty_before + delta)
+    actual_delta = new_qty - qty_before
+
     if existing:
-        new_qty = max(0, int(existing["quantity"]) + delta)
         update = {"quantity": new_qty, "updated_at": now_iso()}
         if delta > 0:
             update["last_in_date"] = now_iso()
         elif delta < 0:
             update["last_out_date"] = now_iso()
         await db.stock.update_one({"id": existing["id"]}, {"$set": update})
-        return new_qty
     else:
         item = StockItem(
             product_id=product_id,
             location_type=location_type,
             location_id=location_id,
-            quantity=max(0, delta),
+            quantity=new_qty,
             last_in_date=now_iso() if delta > 0 else None,
         )
         await db.stock.insert_one(item.model_dump())
-        return item.quantity
+
+    # Get product and location labels for the movement log
+    product = await db.products.find_one({"id": product_id}, {"_id": 0, "sku": 1, "name": 1})
+    location_label = "Hub Main" if location_type == "hub" else ""
+    if location_type == "franchise":
+        fr = await db.franchises.find_one({"id": location_id}, {"_id": 0, "name": 1})
+        if fr:
+            location_label = fr["name"]
+
+    movement = StockMovement(
+        product_id=product_id,
+        sku=(product or {}).get("sku", ""),
+        product_name=(product or {}).get("name", ""),
+        location_type=location_type,
+        location_id=location_id,
+        location_label=location_label,
+        delta=actual_delta,
+        qty_before=qty_before,
+        qty_after=new_qty,
+        reason=reason,
+        reference_type=reference_type,
+        reference_id=reference_id,
+        user_id=user_id,
+        user_email=user_email,
+    )
+    await db.stock_movements.insert_one(movement.model_dump())
+    return new_qty
 
 
 # ============ AUTH ============
@@ -227,7 +256,22 @@ async def list_products(
     if category:
         query["category"] = category
     docs = await db.products.find(query, {"_id": 0}).limit(limit).to_list(limit)
-    # attach hub stock and franchise total stock
+
+    # Franchise users: hide all stock and cost data
+    is_franchise = user["role"] == "franchise_manager"
+    FRANCHISE_SAFE_KEYS = {
+        "id", "sku", "name", "brand", "category", "subcategory",
+        "part_number_oem", "part_number_aftermarket", "hsn_code",
+        "barcode", "qr_code", "unit", "pack_size", "image_url",
+        "mrp", "franchise_price", "gst_rate", "active",
+    }
+    if is_franchise:
+        out = []
+        for d in docs:
+            out.append({k: v for k, v in d.items() if k in FRANCHISE_SAFE_KEYS})
+        return out
+
+    # Warehouse + admin: attach hub & franchise stock metadata
     for d in docs:
         d["hub_stock"] = await get_hub_stock(d["id"])
         fr_total = await db.stock.aggregate([
@@ -247,8 +291,15 @@ async def get_product(pid: str, user: dict = Depends(get_current_user)):
     doc = await db.products.find_one({"id": pid}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Not found")
+    if user["role"] == "franchise_manager":
+        FRANCHISE_SAFE_KEYS = {
+            "id", "sku", "name", "brand", "category", "subcategory",
+            "part_number_oem", "part_number_aftermarket", "hsn_code",
+            "barcode", "qr_code", "unit", "pack_size", "image_url",
+            "mrp", "franchise_price", "gst_rate", "active",
+        }
+        return {k: v for k, v in doc.items() if k in FRANCHISE_SAFE_KEYS}
     doc["hub_stock"] = await get_hub_stock(pid)
-    # per-franchise stock
     fr_stocks = await db.stock.find({"product_id": pid, "location_type": "franchise"}, {"_id": 0}).to_list(200)
     doc["franchise_stocks"] = fr_stocks
     return doc
@@ -286,7 +337,8 @@ async def adjust_product_stock(
     reason: str = Form(""),
     user: dict = Depends(require_roles("super_admin", "warehouse_manager")),
 ):
-    new_qty = await adjust_stock(pid, location_type, location_id, delta, reason, user["id"])
+    new_qty = await adjust_stock(pid, location_type, location_id, delta, reason,
+                                  user["id"], user["email"], "manual", pid)
     await log_audit(user, "stock.adjust", "product", pid, after={"delta": delta, "new_qty": new_qty, "reason": reason}, request=request)
     return {"new_qty": new_qty}
 
@@ -471,7 +523,9 @@ async def commit_invoice(iid: str, body: CommitInvoiceRequest, request: Request,
     for li in body.line_items:
         if li.product_id and li.quantity > 0:
             await adjust_stock(li.product_id, "hub", "hub-main", int(li.quantity),
-                                reason=f"invoice:{body.invoice_number}", user_id=user["id"])
+                                reason=f"invoice:{body.invoice_number}",
+                                user_id=user["id"], user_email=user["email"],
+                                reference_type="invoice", reference_id=iid)
             # Update landing price + recalc franchise/retail
             await db.products.update_one(
                 {"id": li.product_id},
@@ -641,41 +695,147 @@ async def get_indent(iid: str, user: dict = Depends(get_current_user)):
     return doc
 
 
-@api.post("/indents/{iid}/approve")
-async def approve_indent(iid: str, request: Request,
+class FulfillItem(BaseModel):
+    product_id: str
+    fulfill_qty: int
+
+
+class FulfillRequest(BaseModel):
+    items: List[FulfillItem]
+
+
+@api.post("/indents/{iid}/fulfill")
+async def fulfill_indent(iid: str, body: FulfillRequest, request: Request,
                           user: dict = Depends(require_roles("super_admin", "warehouse_manager"))):
+    """Warehouse manager allocates fulfill qty per line. Supports partial fulfillment.
+    Stock is deducted immediately, before/after recorded in stock_movements."""
     indent = await db.indents.find_one({"id": iid}, {"_id": 0})
     if not indent:
         raise HTTPException(404, "Not found")
-    if indent["status"] != "requested":
-        raise HTTPException(409, f"Cannot approve from status: {indent['status']}")
+    if indent["status"] not in {"pending", "awaiting_stock", "partially_fulfilled"}:
+        raise HTTPException(409, f"Cannot fulfill from status: {indent['status']}")
 
-    # Allocate stock
+    fulfill_map = {f.product_id: int(f.fulfill_qty) for f in body.items}
+
+    # Validate sums of fulfill_qty doesn't exceed hub stock for each product
+    for li in indent["line_items"]:
+        requested = int(li["requested_qty"])
+        already_allocated = int(li.get("allocated_qty", 0))
+        wanted = int(fulfill_map.get(li["product_id"], 0))
+        if wanted < 0:
+            raise HTTPException(400, "fulfill_qty cannot be negative")
+        # Cap: cannot exceed remaining pending qty
+        remaining_pending = requested - already_allocated
+        if wanted > remaining_pending:
+            raise HTTPException(400, f"Fulfill qty exceeds pending for {li['sku']}")
+        hub_qty = await get_hub_stock(li["product_id"])
+        if wanted > hub_qty:
+            raise HTTPException(400, f"Fulfill qty exceeds available stock for {li['sku']}")
+
+    # Apply allocations
     new_items = []
     total_requested = 0
     total_allocated = 0
+    any_new_alloc = 0
     for li in indent["line_items"]:
-        hub_qty = await get_hub_stock(li["product_id"])
-        requested = li["requested_qty"]
-        allocated = min(hub_qty, requested)
-        backorder = requested - allocated
-        new_items.append({**li, "allocated_qty": allocated, "backorder_qty": backorder})
+        requested = int(li["requested_qty"])
+        already = int(li.get("allocated_qty", 0))
+        add = int(fulfill_map.get(li["product_id"], 0))
+        new_alloc = already + add
+        backorder = max(0, requested - new_alloc)
+        new_items.append({**li, "allocated_qty": new_alloc, "backorder_qty": backorder})
         total_requested += requested
-        total_allocated += allocated
-        # Reserve stock by deducting from hub immediately
-        if allocated > 0:
-            await adjust_stock(li["product_id"], "hub", "hub-main", -allocated,
-                                reason=f"indent:{indent['indent_number']}", user_id=user["id"])
+        total_allocated += new_alloc
+        any_new_alloc += add
+        if add > 0:
+            await adjust_stock(
+                li["product_id"], "hub", "hub-main", -add,
+                reason=f"indent:{indent['indent_number']}",
+                user_id=user["id"], user_email=user["email"],
+                reference_type="indent", reference_id=iid,
+            )
+
+    if any_new_alloc == 0:
+        raise HTTPException(400, "Enter at least one fulfill quantity")
 
     ratio = round((total_allocated / total_requested * 100) if total_requested else 0, 1)
-    await db.indents.update_one({"id": iid}, {"$set": {
-        "status": "approved",
+    if total_allocated >= total_requested:
+        new_status = "fulfilled"
+    elif total_allocated > 0:
+        new_status = "partially_fulfilled"
+    else:
+        new_status = "awaiting_stock"
+
+    update = {
+        "status": new_status,
         "line_items": new_items,
         "fulfillment_ratio": ratio,
-        "approved_at": now_iso(),
+        "fulfilled_at": now_iso(),
+        "fulfilled_by": user["id"],
+    }
+    if not indent.get("approved_at"):
+        update["approved_at"] = now_iso()
+    await db.indents.update_one({"id": iid}, {"$set": update})
+    await log_audit(user, "indent.fulfill", "indent", iid,
+                    after={"ratio": ratio, "status": new_status, "added": any_new_alloc},
+                    request=request)
+    return {"ok": True, "fulfillment_ratio": ratio, "status": new_status}
+
+
+@api.post("/indents/{iid}/reject")
+async def reject_indent(iid: str, request: Request,
+                         reason: str = Form(""),
+                         user: dict = Depends(require_roles("super_admin", "warehouse_manager"))):
+    indent = await db.indents.find_one({"id": iid}, {"_id": 0})
+    if not indent:
+        raise HTTPException(404, "Not found")
+    if indent["status"] not in {"pending", "awaiting_stock"}:
+        raise HTTPException(409, f"Cannot reject from status: {indent['status']}")
+    await db.indents.update_one({"id": iid}, {"$set": {
+        "status": "rejected", "rejection_reason": reason, "rejected_at": now_iso(),
     }})
-    await log_audit(user, "indent.approve", "indent", iid, after={"ratio": ratio}, request=request)
-    return {"ok": True, "fulfillment_ratio": ratio}
+    # Notify franchise manager
+    await db.notifications.insert_one(Notification(
+        user_id=indent.get("created_by"),
+        title=f"Indent {indent['indent_number']} rejected",
+        body=reason or "Your indent was declined by warehouse.",
+        level="danger",
+        link="/indents",
+    ).model_dump())
+    await log_audit(user, "indent.reject", "indent", iid, after={"reason": reason}, request=request)
+    return {"ok": True}
+
+
+@api.get("/indents/pending-stock/summary")
+async def pending_stock_summary(user: dict = Depends(require_roles("super_admin", "warehouse_manager"))):
+    """For each pending/awaiting_stock/partially_fulfilled indent, show which products are backordered and current hub availability."""
+    indents = await db.indents.find(
+        {"status": {"$in": ["pending", "awaiting_stock", "partially_fulfilled"]}},
+        {"_id": 0},
+    ).to_list(500)
+    rows = []
+    for ind in indents:
+        for li in ind["line_items"]:
+            requested = int(li.get("requested_qty", 0))
+            allocated = int(li.get("allocated_qty", 0))
+            pending = requested - allocated
+            if pending <= 0:
+                continue
+            hub_qty = await get_hub_stock(li["product_id"])
+            rows.append({
+                "indent_id": ind["id"],
+                "indent_number": ind["indent_number"],
+                "franchise_name": ind["franchise_name"],
+                "product_id": li["product_id"],
+                "sku": li["sku"],
+                "product_name": li["product_name"],
+                "pending_qty": pending,
+                "hub_available": hub_qty,
+                "can_now_fulfill": min(pending, hub_qty),
+                "status": ind["status"],
+                "priority": ind.get("priority", "routine"),
+            })
+    return rows
 
 
 @api.post("/indents/{iid}/dispatch")
@@ -690,8 +850,8 @@ async def dispatch_indent(
     indent = await db.indents.find_one({"id": iid}, {"_id": 0})
     if not indent:
         raise HTTPException(404, "Not found")
-    if indent["status"] != "approved":
-        raise HTTPException(409, "Indent not approved")
+    if indent["status"] not in {"fulfilled", "partially_fulfilled"}:
+        raise HTTPException(409, "Indent not fulfilled (allocate stock first)")
 
     # Generate DC
     dc_num = await gen_sequence("dc", "DC")
@@ -742,8 +902,10 @@ async def deliver_indent(iid: str, request: Request,
     for li in indent["line_items"]:
         if li.get("allocated_qty", 0) > 0:
             await adjust_stock(li["product_id"], "franchise", indent["franchise_id"],
-                                int(li["allocated_qty"]), reason=f"indent:{indent['indent_number']}",
-                                user_id=user["id"])
+                                int(li["allocated_qty"]),
+                                reason=f"indent:{indent['indent_number']}",
+                                user_id=user["id"], user_email=user["email"],
+                                reference_type="indent", reference_id=iid)
 
     await db.indents.update_one({"id": iid}, {"$set": {
         "status": "delivered", "delivered_at": now_iso()
@@ -882,7 +1044,9 @@ async def submit_cycle_count(ccid: str, body: CycleCountSubmit, request: Request
             # Adjust stock to match counted qty
             if item["variance"] != 0:
                 await adjust_stock(item["product_id"], "hub", "hub-main", item["variance"],
-                                    reason=f"cycle_count:{cc['cc_number']}", user_id=user["id"])
+                                    reason=f"cycle_count:{cc['cc_number']}",
+                                    user_id=user["id"], user_email=user["email"],
+                                    reference_type="cycle_count", reference_id=ccid)
         updated_items.append(item)
     await db.cycle_counts.update_one({"id": ccid}, {"$set": {
         "items": updated_items, "status": "completed", "completed_at": now_iso(),
@@ -901,7 +1065,34 @@ async def list_audit_logs(limit: int = 100, user: dict = Depends(require_roles("
 # ============ DASHBOARD ============
 @api.get("/dashboard/stats")
 async def dashboard_stats(user: dict = Depends(get_current_user)):
-    # Aggregate basic KPIs
+    is_franchise = user["role"] == "franchise_manager"
+    now = datetime.now(timezone.utc)
+
+    # ---- Franchise-scoped, sensitive-data-stripped view ----
+    if is_franchise:
+        fid = user.get("franchise_id")
+        indents = await db.indents.find({"franchise_id": fid}, {"_id": 0}).to_list(2000)
+        my_pending = sum(1 for i in indents if i["status"] in {"pending", "awaiting_stock", "partially_fulfilled"})
+        my_fulfilled = sum(1 for i in indents if i["status"] == "fulfilled")
+        my_dispatched = sum(1 for i in indents if i["status"] == "dispatched")
+        my_delivered = sum(1 for i in indents if i["status"] == "delivered")
+        # 7-day own trend
+        trend = []
+        for i in range(6, -1, -1):
+            day = (now - timedelta(days=i)).date().isoformat()
+            cnt = sum(1 for ind in indents if (ind.get("created_at", "")[:10] == day))
+            trend.append({"date": day, "count": cnt})
+        return {
+            "is_franchise": True,
+            "my_pending": my_pending,
+            "my_fulfilled": my_fulfilled,
+            "my_dispatched": my_dispatched,
+            "my_delivered": my_delivered,
+            "total_indents": len(indents),
+            "trend_7d": trend,
+        }
+
+    # ---- Admin / Warehouse / Accountant full view ----
     products_count = await db.products.count_documents({})
     vendors_count = await db.vendors.count_documents({})
     franchises_count = await db.franchises.count_documents({})
@@ -919,11 +1110,9 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
     total_value = round(val[0]["total_value"], 2) if val else 0
     total_qty = val[0]["total_qty"] if val else 0
 
-    # Low stock count
     products = await db.products.find({}, {"_id": 0}).to_list(5000)
     low_stock = 0
     dead_stock = 0
-    now = datetime.now(timezone.utc)
     for p in products:
         s = await db.stock.find_one({"product_id": p["id"], "location_type": "hub"}, {"_id": 0})
         if not s:
@@ -940,20 +1129,20 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
         except Exception:
             pass
 
-    # Outstanding payments
     vendors = await db.vendors.find({}, {"_id": 0}).to_list(500)
     outstanding = round(sum(v.get("outstanding_balance", 0) for v in vendors), 2)
 
-    # Indent stats
     indents = await db.indents.find({}, {"_id": 0}).to_list(2000)
-    pending_indents = sum(1 for i in indents if i["status"] in {"requested", "approved", "dispatched"})
+    PENDING_STATUSES = {"pending", "awaiting_stock", "partially_fulfilled", "fulfilled", "dispatched"}
+    pending_indents = sum(1 for i in indents if i["status"] in PENDING_STATUSES)
     delivered_indents = sum(1 for i in indents if i["status"] == "delivered")
+    completed_set = {"partially_fulfilled", "fulfilled", "dispatched", "delivered"}
+    completed_count = sum(1 for i in indents if i["status"] in completed_set)
     avg_fulfillment = (
-        round(sum(i.get("fulfillment_ratio", 0) for i in indents if i["status"] != "requested")
-              / max(1, sum(1 for i in indents if i["status"] != "requested")), 1)
+        round(sum(i.get("fulfillment_ratio", 0) for i in indents if i["status"] in completed_set)
+              / max(1, completed_count), 1)
     )
 
-    # Top-selling products (by total dispatched qty)
     top_pipeline = [
         {"$match": {"status": {"$in": ["dispatched", "delivered"]}}},
         {"$unwind": "$line_items"},
@@ -964,14 +1153,17 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
     ]
     top_products = await db.indents.aggregate(top_pipeline).to_list(5)
 
-    # Indent trend last 7 days
     trend = []
     for i in range(6, -1, -1):
         day = (now - timedelta(days=i)).date().isoformat()
         cnt = sum(1 for ind in indents if (ind.get("created_at", "")[:10] == day))
         trend.append({"date": day, "count": cnt})
 
+    # Pending fulfillment queue summary
+    queue_count = sum(1 for i in indents if i["status"] in {"pending", "awaiting_stock"})
+
     return {
+        "is_franchise": False,
         "products_count": products_count,
         "vendors_count": vendors_count,
         "franchises_count": franchises_count,
@@ -983,6 +1175,7 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
         "pending_indents": pending_indents,
         "delivered_indents": delivered_indents,
         "avg_fulfillment_ratio": avg_fulfillment,
+        "pending_fulfillment_queue": queue_count,
         "top_products": top_products,
         "trend_7d": trend,
     }

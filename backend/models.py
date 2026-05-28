@@ -197,7 +197,16 @@ class PurchaseOrder(BaseModel):
 
 
 # ============ INDENTS (franchise orders) ============
-IndentStatus = Literal["requested", "approved", "dispatched", "delivered", "cancelled"]
+IndentStatus = Literal[
+    "pending",              # newly raised, awaiting warehouse review
+    "partially_fulfilled",  # some lines allocated, some still pending stock
+    "fulfilled",            # all lines fully allocated, ready to dispatch
+    "awaiting_stock",       # zero allocated; waiting for restock
+    "rejected",             # warehouse manager declined
+    "dispatched",           # on the way
+    "delivered",            # received & invoiced
+    "cancelled",
+]
 
 
 class IndentLineItem(BaseModel):
@@ -218,16 +227,21 @@ class Indent(BaseModel):
     franchise_id: str
     franchise_name: str = ""
     priority: Literal["urgent", "routine"] = "routine"
-    status: IndentStatus = "requested"
+    status: IndentStatus = "pending"
     line_items: List[IndentLineItem] = []
     total_amount: float = 0.0
     fulfillment_ratio: float = 0.0  # 0..100
     notes: str = ""
+    rejection_reason: str = ""
     created_by: str = ""
+    fulfilled_by: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
+    fulfilled_at: Optional[str] = None
     approved_at: Optional[str] = None
+    rejected_at: Optional[str] = None
     dispatched_at: Optional[str] = None
     delivered_at: Optional[str] = None
+    eta: Optional[str] = None
 
 
 # ============ DELIVERY CHALLANS / INVOICES ============
@@ -295,7 +309,26 @@ class AuditLog(BaseModel):
     ip_address: str = ""
 
 
-# ============ NOTIFICATIONS ============
+# ============ STOCK MOVEMENTS (immutable audit trail) ============
+class StockMovement(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=gen_id)
+    timestamp: str = Field(default_factory=now_iso)
+    product_id: str
+    sku: str = ""
+    product_name: str = ""
+    location_type: LocationType
+    location_id: str
+    location_label: str = ""
+    delta: int  # +incoming / -outgoing
+    qty_before: int
+    qty_after: int
+    reason: str = ""
+    reference_type: str = ""  # e.g., "indent", "invoice", "cycle_count", "manual"
+    reference_id: str = ""
+    user_id: str = ""
+    user_email: str = ""
+
 class Notification(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=gen_id)
