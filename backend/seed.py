@@ -168,7 +168,7 @@ async def seed_demo_data(db):
             for p in sample:
                 qty = random.randint(2, 10)
                 price = p["franchise_price"]
-                allocated = qty if status in {"dispatched", "delivered"} else (qty if status == "approved" else 0)
+                allocated = qty if status in {"fulfilled", "dispatched", "delivered"} else 0
                 li.append(IndentLineItem(
                     product_id=p["id"], product_name=p["name"], sku=p["sku"],
                     requested_qty=qty, allocated_qty=allocated,
@@ -184,16 +184,17 @@ async def seed_demo_data(db):
                 indent_number=num, franchise_id=fid, franchise_name=fname,
                 priority=priority, status=status, line_items=[IndentLineItem(**i) for i in li],
                 total_amount=round(total, 2),
-                fulfillment_ratio=100.0 if status in {"dispatched", "delivered", "approved"} else 0,
-                approved_at=now_iso() if status != "requested" else None,
+                fulfillment_ratio=100.0 if status in {"fulfilled", "dispatched", "delivered"} else 0,
+                approved_at=now_iso() if status != "pending" else None,
+                fulfilled_at=now_iso() if status in {"fulfilled", "dispatched", "delivered"} else None,
                 dispatched_at=now_iso() if status in {"dispatched", "delivered"} else None,
                 delivered_at=now_iso() if status == "delivered" else None,
             )
             await db.indents.insert_one(ind.model_dump())
             return ind
 
-        await _make_indent(franchise_list[0], "requested", 3, "urgent")
-        await _make_indent(franchise_list[1], "approved", 4)
+        await _make_indent(franchise_list[0], "pending", 3, "urgent")
+        await _make_indent(franchise_list[1], "fulfilled", 4)
         await _make_indent(franchise_list[2], "dispatched", 5)
         await _make_indent(franchise_list[3], "delivered", 4)
         await _make_indent(franchise_list[0], "delivered", 3)

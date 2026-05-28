@@ -1181,6 +1181,28 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
     }
 
 
+# ============ STOCK MOVEMENTS (audit trail) ============
+@api.get("/stock-movements")
+async def list_stock_movements(
+    product_id: Optional[str] = None,
+    reference_type: Optional[str] = None,
+    reference_id: Optional[str] = None,
+    limit: int = 200,
+    user: dict = Depends(require_roles("super_admin", "warehouse_manager", "hub_accountant")),
+):
+    """Immutable audit trail of every stock change (hub or franchise).
+    Visible to admin / warehouse / accountant — NOT to franchise managers."""
+    query: dict = {}
+    if product_id:
+        query["product_id"] = product_id
+    if reference_type:
+        query["reference_type"] = reference_type
+    if reference_id:
+        query["reference_id"] = reference_id
+    docs = await db.stock_movements.find(query, {"_id": 0}).sort("timestamp", -1).limit(limit).to_list(limit)
+    return docs
+
+
 # ============ NOTIFICATIONS ============
 @api.get("/notifications")
 async def list_notifications(user: dict = Depends(get_current_user)):
