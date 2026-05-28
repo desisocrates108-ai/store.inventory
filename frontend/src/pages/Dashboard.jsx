@@ -48,6 +48,52 @@ export default function Dashboard() {
   const trendData = stats.trend_7d || [];
   const topData = (stats.top_products || []).map((t) => ({ name: (t.name || "").slice(0, 20), qty: t.qty }));
 
+  // ---- Franchise Manager view: scoped, no hub-level metrics ----
+  if (stats.is_franchise) {
+    return (
+      <div className="space-y-8" data-testid="dashboard-page">
+        <div>
+          <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">My Orders</div>
+          <h1 className="font-display text-4xl sm:text-5xl font-semibold tracking-tight mt-2">My Franchise</h1>
+          <p className="text-sm text-muted-foreground mt-2">Track your indent pipeline and recent activity.</p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <KpiCard icon={ClockCounterClockwise} label="Pending" value={formatNum(stats.my_pending)} tone={stats.my_pending > 0 ? "warn" : "default"} sub="Awaiting allocation" testid="kpi-my-pending" />
+          <KpiCard icon={CheckCircle} label="Ready to Dispatch" value={formatNum(stats.my_fulfilled)} tone="success" sub="Allocated, awaiting shipment" testid="kpi-my-fulfilled" />
+          <KpiCard icon={TrendUp} label="In Transit" value={formatNum(stats.my_dispatched)} sub="Dispatched from warehouse" testid="kpi-my-dispatched" />
+          <KpiCard icon={Package} label="Delivered" value={formatNum(stats.my_delivered)} tone="success" sub="Received at franchise" testid="kpi-my-delivered" />
+        </div>
+
+        <Card className="border-border" data-testid="trend-chart">
+          <CardHeader><CardTitle className="text-base font-display">My Indents — Last 7 Days</CardTitle></CardHeader>
+          <CardContent>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={trendData}>
+                  <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" />
+                  <XAxis dataKey="date" tickFormatter={(d) => d.slice(5)} stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} allowDecimals={false} />
+                  <Tooltip contentStyle={{ background: "hsl(var(--background))", border: "1px solid hsl(var(--border))", fontSize: 12 }} />
+                  <Line type="monotone" dataKey="count" stroke="hsl(var(--chart-1))" strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="border border-border rounded-md p-5 bg-card">
+          <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-muted-foreground">
+            <Receipt size={14} /> Total Indents Raised
+          </div>
+          <div className="font-display text-3xl font-semibold mt-2 tabular-nums">{stats.total_indents}</div>
+          <div className="text-xs text-muted-foreground mt-1">Lifetime count for your franchise.</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Admin / Warehouse / Accountant Mission Control ----
   return (
     <div className="space-y-8" data-testid="dashboard-page">
       <div>

@@ -210,7 +210,10 @@ class TestIndentsLifecycle:
             assert ind["franchise_id"] == fid
 
     def test_approve_indent(self, admin_client, indent_id):
-        r = admin_client.post(f"{BASE_URL}/api/indents/{indent_id}/approve")
+        # Fulfill the indent fully (replaces legacy /approve endpoint)
+        ind = admin_client.get(f"{BASE_URL}/api/indents/{indent_id}").json()
+        items = [{"product_id": li["product_id"], "fulfill_qty": li["requested_qty"]} for li in ind["line_items"]]
+        r = admin_client.post(f"{BASE_URL}/api/indents/{indent_id}/fulfill", json={"items": items})
         assert r.status_code == 200, r.text
         assert "fulfillment_ratio" in r.json()
 
