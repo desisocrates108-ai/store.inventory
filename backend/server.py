@@ -727,12 +727,16 @@ async def dispatch_indent(
 
 
 @api.post("/indents/{iid}/deliver")
-async def deliver_indent(iid: str, request: Request, user: dict = Depends(get_current_user)):
+async def deliver_indent(iid: str, request: Request,
+                          user: dict = Depends(require_roles("super_admin", "warehouse_manager", "franchise_manager"))):
     indent = await db.indents.find_one({"id": iid}, {"_id": 0})
     if not indent:
         raise HTTPException(404, "Not found")
     if indent["status"] != "dispatched":
         raise HTTPException(409, "Not dispatched")
+    # franchise_manager can only confirm their own franchise's indent
+    if user["role"] == "franchise_manager" and indent["franchise_id"] != user.get("franchise_id"):
+        raise HTTPException(403, "Cannot deliver indent of another franchise")
 
     # Add allocated stock to franchise location
     for li in indent["line_items"]:
