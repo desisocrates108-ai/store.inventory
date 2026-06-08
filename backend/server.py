@@ -459,17 +459,26 @@ async def upload_invoice(
         sku = li.get("sku", "") or ""
         vendor_alias = (li.get("item_alias") or sku or "").strip()
         product = None
+        match_source = None
+        auto_matched_alias = False
         # 1) Vendor alias learning engine (highest priority)
         if vendor_alias:
             product = await routers_v21.lookup_alias(vendor_id, vendor_alias)
+            if product:
+                match_source = "alias"
+                auto_matched_alias = True
         # 2) SKU exact
         if not product and sku:
             product = await db.products.find_one({"sku": sku}, {"_id": 0})
+            if product:
+                match_source = "sku"
         # 3) Name fuzzy
         if not product and pname:
             product = await db.products.find_one(
                 {"name": {"$regex": pname[:30], "$options": "i"}}, {"_id": 0}
             )
+            if product:
+                match_source = "name"
         anomaly = None
         matched = product is not None
         if product:
@@ -501,8 +510,15 @@ async def upload_invoice(
             "qty_valid": bool(li.get("qty_valid", True)),
             "hsn_valid": bool(li.get("hsn_valid", True)),
             "desc_valid": bool(li.get("desc_valid", True)),
+            "unit_valid": bool(li.get("unit_valid", True)),
             "row_valid": bool(li.get("row_valid", True)),
             "confidence": float(li.get("confidence", 1.0) or 0),
+            # V2.2 confidence split + match metadata
+            "llm_confidence": float(li.get("llm_confidence", 1.0) or 0),
+            "heuristic_confidence": float(li.get("heuristic_confidence", 1.0) or 0),
+            "auto_matched_alias": auto_matched_alias,
+            "match_source": match_source,
+            "warnings": li.get("warnings", []) or [],
         })
 
     # Duplicate invoice number check
@@ -527,6 +543,8 @@ async def upload_invoice(
         status="draft",
         raw_ocr_text=parsed.get("_raw", "")[:500],
         confidence_score=float(parsed.get("confidence_score", 0) or 0),
+        llm_confidence=float(parsed.get("llm_confidence", 0) or 0),
+        heuristic_confidence=float(parsed.get("heuristic_confidence", 0) or 0),
         ocr_provider=parsed.get("provider", ""),
         ocr_model=parsed.get("model", ""),
         created_by=user["id"],
@@ -535,15 +553,21 @@ async def upload_invoice(
     await log_audit(user, "invoice.ocr_parse", "invoice", invoice.id,
                     after={"vendor_name": vendor_name, "items": len(line_items),
                            "confidence": invoice.confidence_score,
+                           "llm_confidence": invoice.llm_confidence,
+                           "heuristic_confidence": invoice.heuristic_confidence,
                            "provider": invoice.ocr_provider, "model": invoice.ocr_model},
                     request=request)
 
     invalid_rows = sum(1 for li in line_items if not li.get("row_valid", True))
+    auto_matched = sum(1 for li in line_items if li.get("auto_matched_alias"))
     return {
         "invoice": invoice.model_dump(),
         "duplicate_invoice_number": duplicate,
         "invalid_rows": invalid_rows,
+        "auto_matched_alias_count": auto_matched,
         "confidence_score": invoice.confidence_score,
+        "llm_confidence": invoice.llm_confidence,
+        "heuristic_confidence": invoice.heuristic_confidence,
         "ocr_provider": invoice.ocr_provider,
         "ocr_model": invoice.ocr_model,
         "error": parsed.get("_error"),

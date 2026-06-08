@@ -180,8 +180,15 @@ class InvoiceLineItem(BaseModel):
     qty_valid: bool = True
     hsn_valid: bool = True
     desc_valid: bool = True
+    unit_valid: bool = True
     row_valid: bool = True
     confidence: float = 1.0
+    # V2.2 OCR — confidence split + alias match metadata
+    llm_confidence: float = 1.0          # LLM self-reported (0..1)
+    heuristic_confidence: float = 1.0    # rule-based score (0..1)
+    auto_matched_alias: bool = False     # true if matched via vendor alias engine
+    match_source: Optional[str] = None   # "alias" | "sku" | "name" | None
+    warnings: List[str] = []             # ["missing_hsn", "missing_qty", ...]
 
 
 class PurchaseInvoice(BaseModel):
@@ -199,7 +206,9 @@ class PurchaseInvoice(BaseModel):
     file_url: str = ""  # path stored
     status: Literal["draft", "reconciled", "committed"] = "draft"
     raw_ocr_text: str = ""
-    confidence_score: float = 0.0  # V2.1 — avg across rows
+    confidence_score: float = 0.0  # V2.1 — avg combined across rows
+    llm_confidence: float = 0.0    # V2.2 — avg LLM self-reported
+    heuristic_confidence: float = 0.0  # V2.2 — avg heuristic
     ocr_provider: str = ""
     ocr_model: str = ""
     created_by: str = ""

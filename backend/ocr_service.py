@@ -1,7 +1,9 @@
-"""V2.1 — Provider-configurable OCR service.
+"""V2.2 — Provider-configurable OCR service with dual-confidence scoring.
 
 Default: Gemini 3 Flash (env OCR_MODEL).
-Outputs structured JSON in V2.1 schema (vendor + items + per-row validation flags).
+Outputs structured JSON in V2.2 schema (vendor + items + per-row validation flags
++ per-row LLM self-reported confidence + heuristic confidence + combined).
+
 Backward compatible: also emits legacy keys (line_items, gst_percent, line_total)
 so existing /invoices/upload code in server.py keeps working without changes.
 """
@@ -19,6 +21,7 @@ logger = logging.getLogger(__name__)
 # ---------- Provider configuration ----------
 DEFAULT_PROVIDER = "gemini"
 DEFAULT_MODEL = "gemini-3-flash-preview"
+DEFAULT_LLM_WEIGHT = 0.6  # combined = w*llm + (1-w)*heuristic
 
 
 def _get_provider_model() -> tuple[str, str]:
@@ -28,7 +31,15 @@ def _get_provider_model() -> tuple[str, str]:
     )
 
 
-# ---------- V2.1 strict-JSON prompts ----------
+def _get_llm_weight() -> float:
+    try:
+        w = float(os.environ.get("OCR_CONFIDENCE_LLM_WEIGHT", DEFAULT_LLM_WEIGHT))
+        return max(0.0, min(1.0, w))
+    except Exception:
+        return DEFAULT_LLM_WEIGHT
+
+
+# ---------- V2.2 strict-JSON prompts ----------
 INVOICE_PROMPT = """You are an expert at parsing Indian B2B tax/purchase invoices for automotive spare parts.
 Read the attached invoice (PDF or image) and return ONLY valid JSON — no prose, no markdown fences.
 
@@ -41,6 +52,7 @@ Required JSON schema:
   "cgst": number,
   "sgst": number,
   "igst": number,
+  "overall_confidence": number,        // 0..1 your self-assessed confidence for the whole invoice
   "items": [
     {
       "description": string,           // exact product description as printed
@@ -51,7 +63,8 @@ Required JSON schema:
       "price": number,                  // unit price / rate
       "cgst_percent": number,
       "sgst_percent": number,
-      "net_amount": number              // net line total Rs
+      "net_amount": number,             // net line total Rs
+      "confidence": number              // 0..1 your self-assessed confidence for THIS row
     }
   ]
 }
@@ -64,6 +77,8 @@ EXTRACTION RULES (critical):
 5. If the invoice continues to a second page ("Totals c/o"), include ONLY the rows visible in this image.
 6. Numbers must be plain JSON numbers (no commas, no currency symbol). Use 0 if illegible.
 7. If a field is unreadable, use "" for strings or 0 for numbers — never null.
+8. CONFIDENCE: rate each row honestly. 1.0 = perfectly legible printed line; 0.7 = mostly clear with one ambiguous field; 0.4 = handwritten/smudged/partially obscured; 0.2 = mostly guessing.
+9. overall_confidence should reflect your end-to-end certainty on the invoice header (vendor, number, date, totals).
 
 Return the JSON object ONLY."""
 
@@ -94,11 +109,9 @@ def _clean_json_text(text: str) -> str:
     """Strip markdown fences and pre/post junk, return raw JSON string."""
     text = text.strip()
     if text.startswith("```"):
-        # strip ```json ... ``` or ``` ... ```
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```\s*$", "", text)
         text = text.strip()
-    # extract first {...} balanced block as a last-resort fallback
     if not text.startswith("{"):
         m = re.search(r"\{[\s\S]*\}", text)
         if m:
@@ -118,32 +131,84 @@ def _build_chat(session_id: str, system_message: str) -> LlmChat:
     ).with_model(provider, model)
 
 
+def _clip01(x) -> float:
+    try:
+        v = float(x)
+    except Exception:
+        return 0.0
+    return max(0.0, min(1.0, v))
+
+
 # ---------- Validation layer ----------
 def _validate_item(item: dict) -> dict:
-    """Return validation flags + confidence guess for an item row."""
-    qty = float(item.get("qty") or 0)
+    """Return validation flags + heuristic & combined confidence for an item row.
+
+    Heuristic confidence is purely rule-based.
+    LLM confidence is read from item.confidence (if present).
+    Combined = w*llm + (1-w)*heuristic
+    """
+    qty_raw = item.get("qty")
+    try:
+        qty = float(qty_raw) if qty_raw is not None else 0.0
+    except Exception:
+        qty = 0.0
     hsn = (item.get("hsn") or "").strip()
     desc = (item.get("description") or "").strip()
+    unit = (item.get("unit") or "").strip()
+
     qty_valid = qty > 0
     hsn_valid = bool(hsn) and re.fullmatch(r"\d{4,8}", hsn) is not None
     desc_valid = bool(desc)
-    # Confidence heuristic — count passing rules
-    score = sum([qty_valid, hsn_valid, desc_valid]) / 3
-    if item.get("price", 0) > 0:
-        score = min(1.0, score + 0.05)
-    if item.get("net_amount", 0) > 0:
-        score = min(1.0, score + 0.05)
+    unit_valid = bool(unit)
+
+    # Heuristic confidence — count passing rules + price/net bonuses
+    rules = [qty_valid, hsn_valid, desc_valid, unit_valid]
+    score = sum(1 for r in rules if r) / len(rules)
+    try:
+        if float(item.get("price") or 0) > 0:
+            score = min(1.0, score + 0.05)
+    except Exception:
+        pass
+    try:
+        if float(item.get("net_amount") or 0) > 0:
+            score = min(1.0, score + 0.05)
+    except Exception:
+        pass
+    heuristic_confidence = round(score, 3)
+
+    # LLM self-reported confidence (default 1.0 if model didn't emit one — back-compat)
+    llm_confidence = _clip01(item.get("confidence", 1.0))
+
+    # Combined (weighted)
+    w = _get_llm_weight()
+    combined = round(w * llm_confidence + (1 - w) * heuristic_confidence, 3)
+
+    # Warnings — surface human-readable reasons
+    warnings: list[str] = []
+    if not qty_valid:
+        warnings.append("missing_qty" if qty == 0 else "invalid_qty")
+    if not hsn_valid:
+        warnings.append("missing_hsn" if not hsn else "invalid_hsn")
+    if not desc_valid:
+        warnings.append("missing_description")
+    if not unit_valid:
+        warnings.append("missing_unit")
+
     return {
         "qty_valid": qty_valid,
         "hsn_valid": hsn_valid,
         "desc_valid": desc_valid,
-        "row_valid": qty_valid and hsn_valid and desc_valid,
-        "confidence": round(score, 2),
+        "unit_valid": unit_valid,
+        "row_valid": qty_valid and hsn_valid and desc_valid,  # unit kept soft (warning only)
+        "llm_confidence": llm_confidence,
+        "heuristic_confidence": heuristic_confidence,
+        "confidence": combined,
+        "warnings": warnings,
     }
 
 
 def _to_legacy_line_item(item: dict) -> dict:
-    """Map V2.1 schema → legacy server.py InvoiceLineItem-compatible dict."""
+    """Map V2.2 schema → legacy server.py InvoiceLineItem-compatible dict."""
     qty = float(item.get("qty") or 0)
     price = float(item.get("price") or 0)
     cgst = float(item.get("cgst_percent") or 0)
@@ -160,7 +225,7 @@ def _to_legacy_line_item(item: dict) -> dict:
         "unit_price": price,
         "gst_percent": gst_percent or 18.0,
         "line_total": net,
-        # V2.1 extras (kept on the line so reconciliation UI can display them)
+        # V2.1 extras
         "item_alias": item.get("item_alias") or "",
         "unit": item.get("unit") or "",
         "cgst_percent": cgst,
@@ -169,20 +234,27 @@ def _to_legacy_line_item(item: dict) -> dict:
         "qty_valid": item.get("qty_valid", qty > 0),
         "hsn_valid": item.get("hsn_valid", bool(item.get("hsn"))),
         "desc_valid": item.get("desc_valid", bool(item.get("description"))),
+        "unit_valid": item.get("unit_valid", bool(item.get("unit"))),
         "row_valid": item.get("row_valid", True),
+        # V2.2 confidence split
         "confidence": item.get("confidence", 1.0),
+        "llm_confidence": item.get("llm_confidence", 1.0),
+        "heuristic_confidence": item.get("heuristic_confidence", 1.0),
+        "warnings": item.get("warnings", []),
     }
 
 
 # ---------- Public API ----------
 async def parse_invoice(file_path: str, mime_type: str) -> dict:
-    """Run multimodal OCR on a vendor invoice. Returns a dict combining V2.1 + legacy keys.
+    """Run multimodal OCR on a vendor invoice. Returns a dict combining V2.2 + legacy keys.
 
     Output keys (used by server.py):
       vendor_name, invoice_number, invoice_date, total_amount, cgst, sgst, igst,
-      items[]            (V2.1)
+      items[]            (V2.2 — with confidence split)
       line_items[]       (legacy — auto-generated for back-compat)
-      confidence_score   (avg of per-row scores)
+      confidence_score   (avg combined)
+      llm_confidence     (avg LLM self-reported)
+      heuristic_confidence (avg heuristic)
       provider, model
       _raw, _error (optional)
     """
@@ -191,7 +263,7 @@ async def parse_invoice(file_path: str, mime_type: str) -> dict:
         chat = _build_chat(f"invoice-ocr-{os.path.basename(file_path)}", INVOICE_PROMPT)
         attachment = FileContentWithMimeType(file_path=file_path, mime_type=mime_type)
         msg = UserMessage(
-            text="Parse this invoice and return the JSON exactly as specified.",
+            text="Parse this invoice and return the JSON exactly as specified, including per-row confidence.",
             file_contents=[attachment],
         )
         response = await chat.send_message(msg)
@@ -209,18 +281,29 @@ async def parse_invoice(file_path: str, mime_type: str) -> dict:
     if not isinstance(items, list):
         items = []
 
-    # Validate + enrich
+    # Validate + enrich each row
     validated_items: list[dict] = []
-    confidences: list[float] = []
+    combined_scores: list[float] = []
+    llm_scores: list[float] = []
+    heur_scores: list[float] = []
     for it in items:
         if not isinstance(it, dict):
             continue
         flags = _validate_item(it)
         merged = {**it, **flags}
         validated_items.append(merged)
-        confidences.append(flags["confidence"])
+        combined_scores.append(flags["confidence"])
+        llm_scores.append(flags["llm_confidence"])
+        heur_scores.append(flags["heuristic_confidence"])
 
     legacy_lines = [_to_legacy_line_item(x) for x in validated_items]
+
+    overall_llm = _clip01(data.get("overall_confidence", 0))
+    # Prefer explicit overall_confidence if model provided one; else average of rows
+    avg_llm = round(overall_llm if overall_llm > 0 else (sum(llm_scores) / len(llm_scores) if llm_scores else 0.0), 3)
+    avg_heur = round(sum(heur_scores) / len(heur_scores), 3) if heur_scores else 0.0
+    w = _get_llm_weight()
+    avg_combined = round(w * avg_llm + (1 - w) * avg_heur, 3)
 
     return {
         "vendor_name": data.get("vendor_name", "") or "",
@@ -230,11 +313,13 @@ async def parse_invoice(file_path: str, mime_type: str) -> dict:
         "cgst": float(data.get("cgst") or 0),
         "sgst": float(data.get("sgst") or 0),
         "igst": float(data.get("igst") or 0),
-        # V2.1 native
+        # V2.2 native
         "items": validated_items,
         # Legacy (back-compat with server.py)
         "line_items": legacy_lines,
-        "confidence_score": round(sum(confidences) / len(confidences), 2) if confidences else 0.0,
+        "confidence_score": avg_combined,
+        "llm_confidence": avg_llm,
+        "heuristic_confidence": avg_heur,
         "provider": provider,
         "model": model,
         "_raw": cleaned[:1500],
@@ -293,6 +378,8 @@ def _empty_response(reason: str, provider: str, model: str) -> dict:
         "items": [],
         "line_items": [],
         "confidence_score": 0.0,
+        "llm_confidence": 0.0,
+        "heuristic_confidence": 0.0,
         "provider": provider,
         "model": model,
         "_error": reason,
