@@ -167,7 +167,7 @@ class TestTaxInvoiceLifecycle:
                            headers=_auth(admin_token), timeout=10)
         assert r2.status_code == 409
 
-    def test_cannot_edit_issued(self, base_url, admin_token):
+    def test_can_edit_issued(self, base_url, admin_token):
         r = requests.post(f"{base_url}/api/tax-invoices",
                           json=_new_invoice_payload(),
                           headers=_json(admin_token), timeout=10)
@@ -177,7 +177,8 @@ class TestTaxInvoiceLifecycle:
         r = requests.put(f"{base_url}/api/tax-invoices/{tid}",
                          json={"notes": "Try edit"},
                          headers=_json(admin_token), timeout=10)
-        assert r.status_code == 409
+        assert r.status_code == 200
+        assert r.json()["notes"] == "Try edit"
 
     def test_mark_paid_then_cancel_lifecycle(self, base_url, admin_token):
         r = requests.post(f"{base_url}/api/tax-invoices",

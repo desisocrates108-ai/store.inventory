@@ -1,0 +1,53 @@
+{
+  "summary": "V2.2 P1 Tax Invoice Module — backend + frontend regression. Backend: 21/21 pytests pass (TestOrgSettings 3/3, TestTaxInvoiceLifecycle 7/7 incl. test_can_edit_issued which validates the always-editable change, TestChallanSourcedTaxInvoice 2/2, TestPdfAndShare 3/3, TestListAndPermissions 3/3, TestRegression 3/3). Frontend: list page works perfectly — sidebar nav-tax-invoices visible for super_admin, all 10 list testids render (tax-invoices-page, tax-invoices-kpis, tax-invoices-search, status-tab-all/draft/issued/paid/cancelled, tax-invoices-table, new-tax-invoice-btn). Search/status-tab filtering hits /api/tax-invoices?status=draft correctly. Org Settings page loads at /settings/org with tabs (Company/Tax & Legal/Bank/Invoice Defaults). Detail page on EXISTING invoice id works fully — Issue → invoice_number TI/... appears, issue-btn hides, save-draft-btn becomes 'Save Changes' (always-editable confirmed), mark-paid-btn works (status=PAID), cancel-btn opens dialog with reason field + confirm-cancel-btn → status=CANCELLED, after cancel the save-draft-btn correctly hides (editable=false because status=='cancelled'). download-pdf-btn and back-btn both work.\n\nCRITICAL BUG FOUND: Clicking 'New Tax Invoice' button (or directly visiting /tax-invoices/new) does NOT show the editor — instead it redirects back to /tax-invoices and shows toast 'Tax invoice not found'. Root cause: App.js declares TWO routes for the editor — `/tax-invoices/new` and `/tax-invoices/:id`. When the router matches `/tax-invoices/new` literally (no `:id` param), `useParams().id` is undefined. In TaxInvoiceDetail.jsx line 29 `const isNew = id === 'new'` evaluates to false because id is undefined, so the else-branch runs `api.get('/tax-invoices/undefined')` → 404 → catch redirects to /tax-invoices. Confirmed by network log: `GET /api/tax-invoices/undefined → 404` immediately after visiting /tax-invoices/new. Fix is a one-liner: change to `const isNew = !id || id === 'new';` (OR change App.js so the only route is `/tax-invoices/:id` and a placeholder path forces id='new').",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "TaxInvoiceDetail (/tax-invoices/new)",
+        "issue": "Visiting /tax-invoices/new redirects to /tax-invoices with toast 'Tax invoice not found'. New manual invoice creation flow is COMPLETELY BROKEN from the UI. Root cause: useParams().id is undefined when the matched route is literal '/tax-invoices/new' (no :id slug). isNew = id === 'new' evaluates false → component falls into the GET /api/tax-invoices/undefined branch → 404 → catch navigates back. Confirmed via network log. Fix: change line 29 to `const isNew = !id || id === 'new';` OR collapse the two routes in App.js so id reliably equals 'new'.",
+        "selector": "[data-testid=\"new-tax-invoice-btn\"] → navigates to /tax-invoices/new",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Manual tax invoice creation",
+        "issue": "User cannot create a new manual tax invoice from the UI because the /new route immediately redirects. All other editor flows (Issue, Save Changes on issued, Mark Paid, Cancel, PDF, Back) confirmed working on an EXISTING invoice id.",
+        "affected_selectors": ["[data-testid=\"new-tax-invoice-btn\"]", "[data-testid=\"tax-invoice-detail-page\"]", "[data-testid=\"save-draft-btn\"]", "[data-testid=\"billing_name\"]", "[data-testid=\"line-0-desc\"]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v22_tax_invoice.py",
+    "/app/test_reports/pytest/pytest_v22_tax_invoice_iter5.xml"
+  ],
+  "action_items": [
+    "Fix the /tax-invoices/new redirect bug — single-line change in /app/frontend/src/pages/TaxInvoiceDetail.jsx line 29: `const isNew = !id || id === 'new';` (or change route definition in /app/frontend/src/App.js so only `/tax-invoices/:id` is used and `id` is reliably 'new' for the create path).",
+    "After fix, re-test the full create flow: New Tax Invoice → fill billing_name, invoice_date, line-0-desc/qty/price/gst → Save Draft → URL becomes /tax-invoices/<id>, totals computed → Issue → invoice_number TI/... → Mark Paid → PAID."
+  ],
+  "critical_code_review_comments": [
+    "BUG: TaxInvoiceDetail.jsx line 29 — `const isNew = id === 'new'` fails because the literal route '/tax-invoices/new' is matched WITHOUT a :id slug, so useParams().id is undefined, not the string 'new'. The condition should be `!id || id === 'new'`.",
+    "Defensive nit: in load() catch (line 89-91), the page navigates away on ANY error including transient network errors. A retry/skeleton-with-error message would be friendlier than instant redirect.",
+    "OrgSettings page uses tabs (Company / Tax & Legal / Bank / Invoice Defaults) — testids field-gstin, field-invoice_prefix, field-default_terms, toggle-auto-create are present in DOM only when their respective tab is active. The list-page screenshot for super_admin confirms field-legal_name (Company tab default) + field-state_code render on initial load; switching tabs makes the other testids visible. This is not a bug, but tests that look for those testids must click the corresponding tab first.",
+    "Always-editable behavior is correctly implemented: PUT on issued/paid invoices returns 200 (backend test_can_edit_issued passes), PUT on cancelled returns 409 (Cannot edit a cancelled invoice — line 471-472 routers_tax_invoice.py). Frontend `editable = inv?.status !== 'cancelled'` (line 99) matches.",
+    "Issue-button correctly hides post-issue (verified in UI — issue-btn MISSING after click, save-draft-btn / mark-paid-btn / cancel-btn / download-pdf-btn all OK).",
+    "Cancel dialog includes a reason textarea and confirm-cancel-btn — working end-to-end, status flips to CANCELLED, after which save-draft-btn correctly hides.",
+    "PDF endpoint returns application/pdf with %PDF magic bytes and >1KB content (backend test test_pdf_returns_pdf_bytes + test_pdf_for_issued_invoice_shows_number both pass)."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (21/21 V2.2 tax invoice tests pass)",
+    "frontend": "~85% — list page, settings, detail-page lifecycle (issue/save-changes-on-issued/mark-paid/cancel/pdf/back) all OK; create-from-new is BROKEN by the isNew bug"
+  },
+  "test_credentials": "admin@servall.com / Admin@123 used. Other roles (Accountant@123, Franchise@123) are backend-validated via pytests.",
+  "seed_data_creation": "Tests mutated existing draft invoices (issue → mark-paid; another draft → issue → cancel). Database now has additional issued/paid/cancelled invoices with TI/TEST-V22/ prefix. No new TEST_ prefixed data was created beyond what backend pytests already create.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend is 100% green. The only remaining frontend bug is the /tax-invoices/new isNew detection — fix it (`const isNew = !id || id === 'new';` on line 29 of TaxInvoiceDetail.jsx) and re-run the create flow described in action items. All other testids exist and work. Org Settings testids field-gstin / field-invoice_prefix / field-default_terms / toggle-auto-create live under non-default tabs (Tax & Legal / Invoice Defaults) — click the tab before asserting their visibility.",
+  "rca of the issue": "RCA — /tax-invoices/new redirect:\n1. Reproduction: login as admin@servall.com → click 'New Tax Invoice' button OR direct GET /tax-invoices/new. Result: page loads briefly, network shows `GET /api/tax-invoices/undefined → 404`, page redirects to /tax-invoices and shows toast 'Tax invoice not found'.\n2. Root cause: App.js registers two routes for the same component:\n     <Route path=\"/tax-invoices/new\" element={<TaxInvoiceDetail />} />\n     <Route path=\"/tax-invoices/:id\" element={<TaxInvoiceDetail />} />\n   When the URL is literally '/tax-invoices/new', the first route is matched WITHOUT a `:id` URL param, so `useParams()` returns `{}` and `id` is `undefined`.\n3. In TaxInvoiceDetail.jsx line 29, `const isNew = id === 'new'` evaluates to `false` because `undefined !== 'new'`. The load() function then enters the else-branch (line 84-86) and calls `api.get('/tax-invoices/undefined')`, which returns 404 and the catch block (line 88-91) shows the toast and navigates back.\n4. Mitigation (1-line): line 29 → `const isNew = !id || id === 'new';`\n5. Alternative: replace both routes with a single `/tax-invoices/:id` route and gate the create path through `/tax-invoices/new` working because `id` will then equal 'new'. Pick whichever the team prefers.\n6. Why this slipped: backend pytest can never catch this — it's a pure SPA routing param-parsing bug. The list page renders fine, so the smoke screenshot in iteration 4 looked healthy."
+}

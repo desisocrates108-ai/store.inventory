@@ -21,6 +21,9 @@ import BulkImport from "@/pages/BulkImport";
 import NewOrder from "@/pages/NewOrder";
 import AuditLogs from "@/pages/AuditLogs";
 import Reports from "@/pages/Reports";
+import OrgSettings from "@/pages/OrgSettings";
+import TaxInvoices from "@/pages/TaxInvoices";
+import TaxInvoiceDetail from "@/pages/TaxInvoiceDetail";
 import "@/App.css";
 
 function RequireAuth({ children }) {
@@ -53,6 +56,10 @@ function App() {
             <Route path="/indents/new" element={<RequireAuth><NewOrder /></RequireAuth>} />
             <Route path="/audit-logs" element={<RequireAuth><AuditLogs /></RequireAuth>} />
             <Route path="/reports" element={<RequireAuth><Reports /></RequireAuth>} />
+            <Route path="/tax-invoices" element={<RequireAuth><TaxInvoices /></RequireAuth>} />
+            <Route path="/tax-invoices/new" element={<RequireAuth><TaxInvoiceDetail /></RequireAuth>} />
+            <Route path="/tax-invoices/:id" element={<RequireAuth><TaxInvoiceDetail /></RequireAuth>} />
+            <Route path="/settings/org" element={<RequireAuth><OrgSettings /></RequireAuth>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>

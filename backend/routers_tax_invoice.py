@@ -468,8 +468,8 @@ async def update_tax_invoice(tid: str, body: TaxInvoiceUpdateIn, request: Reques
     cur = await _db.tax_invoices.find_one({"id": tid}, {"_id": 0})
     if not cur:
         raise HTTPException(404, "Not found")
-    if cur.get("status") not in ("draft",):
-        raise HTTPException(409, f"Cannot edit invoice in status '{cur.get('status')}' — only drafts are editable")
+    if cur.get("status") == "cancelled":
+        raise HTTPException(409, "Cannot edit a cancelled invoice")
 
     patch_in = body.model_dump(exclude_none=True)
     # If line_items changed → recompute totals

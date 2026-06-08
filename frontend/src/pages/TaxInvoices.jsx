@@ -182,7 +182,7 @@ export default function TaxInvoices() {
                 <tr><td colSpan={9} className="text-center text-muted-foreground py-12">
                   <Receipt size={32} weight="duotone" className="mx-auto mb-2 opacity-40" />
                   <div>No tax invoices yet.</div>
-                  <div className="text-[11px] mt-1">Issue one from a delivered challan, or click "New Tax Invoice".</div>
+                  <div className="text-[11px] mt-1">Issue one from a delivered challan, or click &quot;New Tax Invoice&quot;.</div>
                 </td></tr>
               )}
               {!loading && filtered.map((inv) => {

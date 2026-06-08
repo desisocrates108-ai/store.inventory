@@ -96,7 +96,7 @@ export default function TaxInvoiceDetail() {
     load();
   }
 
-  const editable = inv?.status === "draft" && !issuing;
+  const editable = inv?.status !== "cancelled" && !issuing;
 
   // ---- Client-side preview totals (server is source of truth on save) ----
   const previewTotals = useMemo(() => {
@@ -260,10 +260,10 @@ export default function TaxInvoiceDetail() {
         <div className="flex items-center gap-2 flex-wrap">
           {editable && (
             <Button variant="outline" onClick={saveDraft} disabled={saving} data-testid="save-draft-btn">
-              <FloppyDisk size={14} className="mr-2" /> {saving ? "Saving…" : "Save Draft"}
+              <FloppyDisk size={14} className="mr-2" /> {saving ? "Saving…" : (inv?.status === "draft" ? "Save Draft" : "Save Changes")}
             </Button>
           )}
-          {editable && inv.id && (
+          {inv?.status === "draft" && inv.id && (
             <Button onClick={issue} disabled={issuing} data-testid="issue-btn">
               <Lightning size={14} className="mr-2" /> {issuing ? "Issuing…" : "Issue Invoice"}
             </Button>
@@ -493,9 +493,16 @@ function FranchisePicker({ onPick, onClose }) {
   };
 
   React.useEffect(() => {
-    search("");
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.get("/franchises");
+        if (!cancelled) setList((r.data || []).slice(0, 20));
+      } catch {
+        if (!cancelled) setList([]);
+      }
+    })();
+    return () => { cancelled = true; clearTimeout(timerRef.current); };
   }, []);
 
   return (
@@ -541,10 +548,6 @@ function ProductPicker({ onPick, onClose }) {
       finally { setLoading(false); }
     }, 240);
   };
-
-  React.useEffect(() => {
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, []);
 
   return (
     <div className="absolute z-50 left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-lg max-h-80 overflow-auto" data-testid="line-product-picker">
