@@ -8,7 +8,17 @@ Build a Next-Gen B2B Franchise ERP for Servall — a multi-branch two-wheeler au
 - AI/OCR: Gemini 3 Flash multimodal (`gemini-3-flash-preview`) via Emergent Universal Key.
 - Auth: JWT-based with 4 roles (super_admin, hub_accountant, warehouse_manager, franchise_manager).
 - Demo data seeded on first startup (idempotent).
-- Language: User prefers Hinglish (Hindi + English) responses.
+- Language: User prefers English responses (confirmed in V2.1 fork, Feb 2026).
+
+## V2.1 Implemented (Feb 2026) — Phase 1
+- **OCR Engine v2**: Configurable provider/model via `OCR_PROVIDER` + `OCR_MODEL` env vars (default `gemini` / `gemini-3-flash-preview`). JSON-strict extraction, confidence_score per invoice, line-item validity flags, OCR alias learning (`/api/ocr-aliases`), reconciliation view in `StockEntry.jsx`.
+- **Franchise Tier Pricing**: 4 system tiers seeded (MASTER 18%, STANDARD 22%, BUDDY 25%, PERFORMAX 28%) + custom tier support. **Category-wise margin overrides** (e.g. MASTER × Engine Parts = 15%) via `category_overrides` array on `franchise_tiers`. `_resolve_margin` helper at `routers_v21.py:152` falls back from category override → tier base margin. Tier-aware pricing applied in indent creation and `/api/franchise-tiers/{id}/preview`. UI: `/pricing/tiers` with create/edit/preview.
+- **Bulk Inventory Import**: Strict 14-column Excel/CSV template, validate-then-commit flow with row-level errors, idempotent upsert by SKU. UI: `/inventory/bulk-import`.
+- **Global Date Filter**: New `DateFilter` component with presets (Today, Yesterday, Last 7/30/90 days, This/Last month, This year, Custom). Wired into 9 pages: Dashboard, Inventory, StockEntry (with new Recent Invoices panel), Indents, PurchaseOrders, DeliveryChallans, AuditLogs, Vendors, Franchises. Backend `/api/filtered/*` endpoints for invoices, indents, purchase-orders, delivery-challans, stock-movements, audit-logs, dashboard-trend.
+- **Editable Purchase Orders**: PUT `/api/purchase-orders/{id}` allows editing lines/qty/rates/vendor while status=draft. Approval locks the PO. PDF download via `/api/purchase-orders/{id}/pdf` (reportlab).
+- **Multi-source Indents**: `/api/indents/photo` (Gemini OCR on image), `/api/indents/excel` (CSV/XLSX upload), legacy `/api/indents` defaults source='system'. `Indent.source` + `source_attachment_url` fields. UI: `/indents/new` with 3 tabs. Source badges shown on `Indents.jsx` cards.
+
+## Implemented (May 2026)
 
 ## Architecture
 - Backend: FastAPI + Motor (MongoDB), Pydantic v2, PyJWT + bcrypt, emergentintegrations for Gemini OCR.
@@ -54,18 +64,24 @@ Build a Next-Gen B2B Franchise ERP for Servall — a multi-branch two-wheeler au
 - Light + true-black dark mode toggle, global Cmd-K style search bar, mobile-responsive sidebar.
 
 ## Test Coverage
+- `/app/backend/tests/test_v21_phase1.py` — 23 V2.1 Phase 1 tests (tiers CRUD + category overrides, _resolve_margin, bulk import, multi-source indents, editable PO + PDF, all 7 /filtered endpoints, OCR aliases) — ALL PASSING.
 - `/app/backend/tests/test_fulfillment_workflow.py` — 19 tests (partial/full fulfill chain, validation, reject, stock-movements immutability, RBAC masking) — ALL PASSING.
 - `/app/backend/tests/test_servall_backend.py` — lifecycle tests updated for new fulfill endpoint — 7 PASSING.
 
 ## Backlog
-**P1** — Next priorities
+**P1 — Phase 2 (Next)**
+- **Professional Invoice PDF module**: editable invoice dates, logo, QR (UPI/verification), GST breakdown, WhatsApp share.
+- **Delivery Challan redesign**: professional format, WhatsApp sharing.
+
+**P2 — Phase 3**
+- **Reporting**: Inventory Value report, Stock Movement report, Purchase report, Sales report. Export to PDF/Excel.
+- **Refactor `server.py`** (~1346 lines) into `/app/backend/routes/` (auth.py, products.py, indents.py, inventory.py, dashboard.py).
 - Auto-reopen pending indents when restock PO is received (notify warehouse, lift "awaiting_stock" indents).
 - FIFO batch-wise allocation in fulfillment.
 - Barcode-based dispatch verification (mobile/tablet friendly).
 - Convert N+1 stock lookups in `/api/products` and `/api/dashboard/stats` to MongoDB `$lookup`.
-- Refactor server.py (~1240 lines) into routers (/app/backend/routes/auth.py, indents.py, inventory.py, etc.).
 
-**P2** — Advanced
+**P3 — Advanced**
 - WhatsApp / Email low-stock alerts.
 - Vendor Credit Health widget (working capital optimizer).
 - Demand forecasting AI (consumption seasonality).
