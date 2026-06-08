@@ -16,6 +16,9 @@ import DeliveryChallans from "@/pages/DeliveryChallans";
 import Aging from "@/pages/Aging";
 import CycleCount from "@/pages/CycleCount";
 import Pricing from "@/pages/Pricing";
+import FranchiseTiers from "@/pages/FranchiseTiers";
+import BulkImport from "@/pages/BulkImport";
+import NewOrder from "@/pages/NewOrder";
 import AuditLogs from "@/pages/AuditLogs";
 import "@/App.css";
 
@@ -44,6 +47,9 @@ function App() {
             <Route path="/aging" element={<RequireAuth><Aging /></RequireAuth>} />
             <Route path="/cycle-count" element={<RequireAuth><CycleCount /></RequireAuth>} />
             <Route path="/pricing" element={<RequireAuth><Pricing /></RequireAuth>} />
+            <Route path="/pricing/tiers" element={<RequireAuth><FranchiseTiers /></RequireAuth>} />
+            <Route path="/inventory/bulk-import" element={<RequireAuth><BulkImport /></RequireAuth>} />
+            <Route path="/indents/new" element={<RequireAuth><NewOrder /></RequireAuth>} />
             <Route path="/audit-logs" element={<RequireAuth><AuditLogs /></RequireAuth>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

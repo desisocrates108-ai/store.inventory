@@ -5,7 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { CurrencyInr, Lightning } from "@phosphor-icons/react";
+import { CurrencyInr, Lightning, Crown, ArrowRight } from "@phosphor-icons/react";
+import { Link } from "react-router-dom";
+import { Badge } from "@/components/ui/badge";
 
 export default function Pricing() {
   const [category, setCategory] = useState("__all__");
@@ -46,6 +48,19 @@ export default function Pricing() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Link to="/pricing/tiers" className="lg:col-span-3 border border-border rounded-md p-5 bg-gradient-to-r from-foreground/[0.03] to-transparent hover:border-foreground transition-colors group" data-testid="tiers-link-card">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex h-11 w-11 items-center justify-center rounded-md bg-foreground text-background"><Crown size={20} weight="duotone" /></div>
+              <div>
+                <div className="font-display text-base font-medium">Franchise Tier Pricing <Badge variant="outline" className="ml-2 text-[10px]">V2.1</Badge></div>
+                <div className="text-xs text-muted-foreground mt-0.5">Manage MASTER / STANDARD / BUDDY / PERFORMAX tiers with category overrides. Replaces single-margin model.</div>
+              </div>
+            </div>
+            <ArrowRight size={18} className="text-muted-foreground group-hover:text-foreground transition-colors" />
+          </div>
+        </Link>
+
         <div className="lg:col-span-2 border border-border rounded-md p-6 bg-card space-y-4">
           <h2 className="font-display text-base font-medium flex items-center gap-2"><CurrencyInr size={16} /> Bulk Margin Update</h2>
           <div>

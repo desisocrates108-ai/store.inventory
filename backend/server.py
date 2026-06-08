@@ -30,6 +30,8 @@ from auth_utils import (
 )
 from ocr_service import parse_invoice
 from seed import seed_demo_data
+import ocr_service as _ocr_service_mod
+import routers_v21
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -79,6 +81,50 @@ async def gen_sequence(name: str, prefix: str, pad: int = 4) -> str:
 async def get_hub_stock(product_id: str) -> int:
     doc = await db.stock.find_one({"product_id": product_id, "location_type": "hub"}, {"_id": 0})
     return int(doc["quantity"]) if doc else 0
+
+
+# ------------ V2.1 — shared upload helper used by both OCR + multi-source ordering ------------
+ALLOWED_UPLOAD_EXT = {"pdf", "jpg", "jpeg", "png", "webp", "xlsx", "xls", "csv"}
+MIME_MAP = {
+    "pdf": "application/pdf",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+}
+
+
+async def save_uploaded_file(file: UploadFile, prefix: str = "upload") -> tuple[str, str]:
+    ext = (file.filename or "upload").split(".")[-1].lower()
+    if ext not in ALLOWED_UPLOAD_EXT:
+        raise HTTPException(400, f"Unsupported file type: .{ext}")
+    file_id = gen_id()
+    safe_name = f"{prefix}-{file_id}.{ext}"
+    file_path = UPLOAD_DIR / safe_name
+    with file_path.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+    public_url = f"/uploads/{safe_name}"
+    return str(file_path), public_url
+
+
+# ------------ Tier-aware pricing helper ------------
+async def get_franchise_tier(franchise_id: str) -> Optional[dict]:
+    fr = await db.franchises.find_one({"id": franchise_id}, {"_id": 0})
+    if not fr or not fr.get("tier_id"):
+        return None
+    return await db.franchise_tiers.find_one({"id": fr["tier_id"]}, {"_id": 0})
+
+
+def compute_tier_price(landing: float, tier: Optional[dict], category: str, fallback_margin: float = 22.0) -> float:
+    if not tier:
+        return round(landing * (1 + fallback_margin / 100), 2)
+    margin = tier.get("margin_percent", fallback_margin)
+    for ov in tier.get("category_overrides", []) or []:
+        if (ov.get("category") or "").strip().lower() == (category or "").strip().lower():
+            margin = ov.get("margin_percent", margin)
+            break
+    return round(landing * (1 + float(margin) / 100), 2)
+
 
 
 async def adjust_stock(product_id: str, location_type: str, location_id: str, delta: int,
@@ -266,9 +312,16 @@ async def list_products(
         "mrp", "franchise_price", "gst_rate", "active",
     }
     if is_franchise:
+        tier = await get_franchise_tier(user.get("franchise_id") or "") if user.get("franchise_id") else None
         out = []
         for d in docs:
-            out.append({k: v for k, v in d.items() if k in FRANCHISE_SAFE_KEYS})
+            row = {k: v for k, v in d.items() if k in FRANCHISE_SAFE_KEYS}
+            if tier:
+                row["franchise_price"] = compute_tier_price(
+                    d.get("landing_price", 0) or 0, tier,
+                    d.get("category", ""), d.get("margin_percent", 22),
+                )
+            out.append(row)
         return out
 
     # Warehouse + admin: attach hub & franchise stock metadata
@@ -385,21 +438,10 @@ async def upload_invoice(
     ext = (file.filename or "upload").split(".")[-1].lower()
     if ext not in {"pdf", "jpg", "jpeg", "png", "webp"}:
         raise HTTPException(400, "Unsupported file type")
-    file_id = gen_id()
-    safe_name = f"{file_id}.{ext}"
-    file_path = UPLOAD_DIR / safe_name
-    with file_path.open("wb") as f:
-        shutil.copyfileobj(file.file, f)
+    file_path_str, public_url = await save_uploaded_file(file, prefix="invoice")
+    mime = MIME_MAP.get(ext, "application/octet-stream")
 
-    mime = {
-        "pdf": "application/pdf",
-        "jpg": "image/jpeg",
-        "jpeg": "image/jpeg",
-        "png": "image/png",
-        "webp": "image/webp",
-    }[ext]
-
-    parsed = await parse_invoice(str(file_path), mime)
+    parsed = await parse_invoice(file_path_str, mime)
 
     # Try to match vendor by name
     vendor_id = None
@@ -414,9 +456,15 @@ async def upload_invoice(
     for li in parsed.get("line_items", []) or []:
         pname = li.get("product_name", "") or ""
         sku = li.get("sku", "") or ""
+        vendor_alias = (li.get("item_alias") or sku or "").strip()
         product = None
-        if sku:
+        # 1) Vendor alias learning engine (highest priority)
+        if vendor_alias:
+            product = await routers_v21.lookup_alias(vendor_id, vendor_alias)
+        # 2) SKU exact
+        if not product and sku:
             product = await db.products.find_one({"sku": sku}, {"_id": 0})
+        # 3) Name fuzzy
         if not product and pname:
             product = await db.products.find_one(
                 {"name": {"$regex": pname[:30], "$options": "i"}}, {"_id": 0}
@@ -443,6 +491,17 @@ async def upload_invoice(
             "line_total": float(li.get("line_total", 0) or 0),
             "matched": matched,
             "anomaly": anomaly,
+            # V2.1 extras (passed through from OCR)
+            "item_alias": li.get("item_alias", ""),
+            "unit": li.get("unit", ""),
+            "cgst_percent": float(li.get("cgst_percent", 0) or 0),
+            "sgst_percent": float(li.get("sgst_percent", 0) or 0),
+            "net_amount": float(li.get("net_amount", 0) or 0),
+            "qty_valid": bool(li.get("qty_valid", True)),
+            "hsn_valid": bool(li.get("hsn_valid", True)),
+            "desc_valid": bool(li.get("desc_valid", True)),
+            "row_valid": bool(li.get("row_valid", True)),
+            "confidence": float(li.get("confidence", 1.0) or 0),
         })
 
     # Duplicate invoice number check
@@ -463,18 +522,29 @@ async def upload_invoice(
         sgst=float(parsed.get("sgst", 0) or 0),
         igst=float(parsed.get("igst", 0) or 0),
         line_items=[InvoiceLineItem(**li) for li in line_items],
-        file_url=f"/uploads/{safe_name}",
+        file_url=public_url,
         status="draft",
         raw_ocr_text=parsed.get("_raw", "")[:500],
+        confidence_score=float(parsed.get("confidence_score", 0) or 0),
+        ocr_provider=parsed.get("provider", ""),
+        ocr_model=parsed.get("model", ""),
         created_by=user["id"],
     )
     await db.invoices.insert_one(invoice.model_dump())
     await log_audit(user, "invoice.ocr_parse", "invoice", invoice.id,
-                    after={"vendor_name": vendor_name, "items": len(line_items)}, request=request)
+                    after={"vendor_name": vendor_name, "items": len(line_items),
+                           "confidence": invoice.confidence_score,
+                           "provider": invoice.ocr_provider, "model": invoice.ocr_model},
+                    request=request)
 
+    invalid_rows = sum(1 for li in line_items if not li.get("row_valid", True))
     return {
         "invoice": invoice.model_dump(),
         "duplicate_invoice_number": duplicate,
+        "invalid_rows": invalid_rows,
+        "confidence_score": invoice.confidence_score,
+        "ocr_provider": invoice.ocr_provider,
+        "ocr_model": invoice.ocr_model,
         "error": parsed.get("_error"),
     }
 
@@ -526,6 +596,25 @@ async def commit_invoice(iid: str, body: CommitInvoiceRequest, request: Request,
                                 reason=f"invoice:{body.invoice_number}",
                                 user_id=user["id"], user_email=user["email"],
                                 reference_type="invoice", reference_id=iid)
+            # Learn vendor alias (V2.1) — only if alias differs from our SKU
+            alias = (getattr(li, "item_alias", "") or "").strip().upper()
+            if alias:
+                existing_alias = await db.ocr_aliases.find_one(
+                    {"vendor_id": body.vendor_id, "vendor_alias": alias, "product_id": li.product_id},
+                    {"_id": 0},
+                )
+                if existing_alias:
+                    await db.ocr_aliases.update_one(
+                        {"id": existing_alias["id"]},
+                        {"$inc": {"hits": 1}, "$set": {"last_used_at": now_iso()}},
+                    )
+                else:
+                    from models import OcrAlias
+                    rec = OcrAlias(
+                        vendor_id=body.vendor_id, vendor_alias=alias,
+                        product_id=li.product_id, sku=li.sku or "",
+                    )
+                    await db.ocr_aliases.insert_one(rec.model_dump())
             # Update landing price + recalc franchise/retail
             await db.products.update_one(
                 {"id": li.product_id},
@@ -636,6 +725,8 @@ async def create_indent(body: IndentCreate, request: Request, user: dict = Depen
     if not franchise:
         raise HTTPException(404, "Franchise not found")
 
+    tier = await get_franchise_tier(body.franchise_id)
+
     items: List[IndentLineItem] = []
     total = 0.0
     for li in body.line_items:
@@ -643,7 +734,11 @@ async def create_indent(body: IndentCreate, request: Request, user: dict = Depen
         if not p:
             continue
         qty = int(li["requested_qty"])
-        price = p.get("franchise_price", 0) or 0
+        if tier:
+            price = compute_tier_price(p.get("landing_price", 0) or 0, tier,
+                                       p.get("category", ""), p.get("margin_percent", 22))
+        else:
+            price = p.get("franchise_price", 0) or 0
         items.append(IndentLineItem(
             product_id=p["id"],
             product_name=p["name"],
@@ -1214,6 +1309,18 @@ async def list_notifications(user: dict = Depends(get_current_user)):
 
 # Mount router
 app.include_router(api)
+
+# V2.1 — additive routes (OCR aliases, franchise tiers, multi-source orders, bulk import, editable PO, date filters)
+routers_v21.init(
+    db=db,
+    log_audit_fn=log_audit,
+    gen_sequence_fn=gen_sequence,
+    save_uploaded_file_fn=save_uploaded_file,
+    adjust_stock_fn=adjust_stock,
+    ocr_service_mod=_ocr_service_mod,
+    upload_dir=UPLOAD_DIR,
+)
+app.include_router(routers_v21.router, prefix="/api")
 
 # Serve uploaded files
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")

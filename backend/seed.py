@@ -4,11 +4,18 @@ from datetime import datetime, timezone, timedelta
 from auth_utils import hash_password
 from models import (
     User, Franchise, Vendor, Product, StockItem, Indent, IndentLineItem,
-    DeliveryChallan, AuditLog, Notification, now_iso, gen_id,
+    DeliveryChallan, AuditLog, Notification, FranchiseTier, now_iso, gen_id,
 )
 import random
 
 logger = logging.getLogger("seed")
+
+DEMO_TIERS = [
+    {"name": "MASTER",    "margin_percent": 18.0, "color": "#0ea5e9", "is_system": True},
+    {"name": "STANDARD",  "margin_percent": 22.0, "color": "#10b981", "is_system": True},
+    {"name": "BUDDY",     "margin_percent": 25.0, "color": "#f59e0b", "is_system": True},
+    {"name": "PERFORMAX", "margin_percent": 28.0, "color": "#ef4444", "is_system": True},
+]
 
 DEMO_USERS = [
     {"email": "admin@servall.com", "password": "Admin@123", "full_name": "Servall Super Admin", "role": "super_admin"},
@@ -81,6 +88,22 @@ DEMO_PRODUCTS = [
 async def seed_demo_data(db):
     """Idempotent seed - only inserts if collections are empty."""
     try:
+        # V2.1 — top-up tiers if missing (separate from first-run users check)
+        existing_tiers = await db.franchise_tiers.count_documents({})
+        if existing_tiers == 0:
+            for t in DEMO_TIERS:
+                doc = FranchiseTier(**t)
+                await db.franchise_tiers.insert_one(doc.model_dump())
+            logger.info("Seeded %d default franchise tiers.", len(DEMO_TIERS))
+            # If franchises exist but have no tier, assign STANDARD to all (back-fill)
+            existing_franchises = await db.franchises.find({}, {"_id": 0, "id": 1, "tier_id": 1}).to_list(500)
+            if existing_franchises:
+                std_tier = await db.franchise_tiers.find_one({"name": "STANDARD"}, {"_id": 0, "id": 1})
+                if std_tier:
+                    for fr in existing_franchises:
+                        if not fr.get("tier_id"):
+                            await db.franchises.update_one({"id": fr["id"]}, {"$set": {"tier_id": std_tier["id"]}})
+
         existing_users = await db.users.count_documents({})
         if existing_users > 0:
             logger.info("Demo data already seeded, skipping.")
@@ -88,10 +111,20 @@ async def seed_demo_data(db):
 
         logger.info("Seeding demo data...")
 
+        # Franchise tiers (V2.1)
+        tier_by_name = {}
+        for t in DEMO_TIERS:
+            doc = FranchiseTier(**t)
+            await db.franchise_tiers.insert_one(doc.model_dump())
+            tier_by_name[t["name"]] = doc.id
+
         # Franchises
         franchise_ids = {}
-        for f in DEMO_FRANCHISES:
-            fr = Franchise(**f)
+        # Assign default tiers to demo franchises (rotate through to showcase pricing)
+        tier_assignment = ["STANDARD", "MASTER", "BUDDY", "PERFORMAX"]
+        for idx, f in enumerate(DEMO_FRANCHISES):
+            tier_name = tier_assignment[idx % len(tier_assignment)]
+            fr = Franchise(**f, tier_id=tier_by_name.get(tier_name))
             await db.franchises.insert_one(fr.model_dump())
             franchise_ids[f["code"]] = fr.id
 

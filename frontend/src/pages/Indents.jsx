@@ -11,8 +11,11 @@ import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import {
   Plus, Lightning, Package, CheckCircle, Truck, Flag, X, Warning, Stack,
-  ArrowsClockwise, XCircle, MagicWand, Hourglass,
+  ArrowsClockwise, XCircle, MagicWand, Hourglass, Camera, FileXls, Keyboard, Paperclip,
 } from "@phosphor-icons/react";
+import { Link } from "react-router-dom";
+import DateFilter, { dateQuery } from "@/components/DateFilter";
+import { BACKEND_URL } from "@/lib/api";
 
 const STATUSES = [
   "pending",
@@ -44,6 +47,8 @@ export default function Indents() {
   const [products, setProducts] = useState([]);
   const [franchises, setFranchises] = useState([]);
   const [hubStockMap, setHubStockMap] = useState({}); // product_id -> qty (admin/wh only)
+  const [dateRange, setDateRange] = useState({ preset: "all", from: "", to: "" });
+  const [sourceFilter, setSourceFilter] = useState("");
 
   // Dialogs
   const [creating, setCreating] = useState(false);
@@ -62,12 +67,17 @@ export default function Indents() {
   const [dispatchData, setDispatchData] = useState({ transporter_name: "", vehicle_number: "", lr_number: "", eway_bill_number: "" });
 
   const load = async () => {
-    const r = await api.get("/indents");
+    const q = dateQuery(dateRange);
+    if (sourceFilter) q.source = sourceFilter;
+    const params = new URLSearchParams(q).toString();
+    const url = params ? `/filtered/indents?${params}` : "/indents";
+    const r = await api.get(url);
     setIndents(r.data);
   };
 
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [dateRange, sourceFilter]);
+
   useEffect(() => {
-    load();
     api.get("/products?limit=500").then((r) => {
       setProducts(r.data);
       if (!isFranchiseMgr) {
@@ -219,9 +229,22 @@ export default function Indents() {
       <div className="border border-border rounded-md p-3 bg-background lift-on-hover" data-testid={`indent-${i.indent_number}`}>
         <div className="flex items-center justify-between">
           <div className="font-mono text-[11px] text-muted-foreground">{i.indent_number}</div>
-          {i.priority === "urgent" && (
-            <Badge variant="destructive" className="text-[10px]"><Flag size={10} className="mr-1" />URGENT</Badge>
-          )}
+          <div className="flex items-center gap-1">
+            {i.source && i.source !== "system" && (
+              <Badge variant="outline" className={`text-[9px] ${i.source === "photo" ? "bg-violet-500/10 text-violet-600 border-violet-500/30" : "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"}`}>
+                {i.source === "photo" ? <Camera size={9} className="mr-0.5" /> : <FileXls size={9} className="mr-0.5" />}
+                {i.source.toUpperCase()}
+              </Badge>
+            )}
+            {i.source_attachment_url && (
+              <a href={`${BACKEND_URL}${i.source_attachment_url}`} target="_blank" rel="noreferrer" className="text-muted-foreground hover:text-foreground" title="View original" data-testid={`view-source-${i.indent_number}`}>
+                <Paperclip size={12} />
+              </a>
+            )}
+            {i.priority === "urgent" && (
+              <Badge variant="destructive" className="text-[10px]"><Flag size={10} className="mr-1" />URGENT</Badge>
+            )}
+          </div>
         </div>
         <div className="mt-1 text-sm font-medium leading-tight">{i.franchise_name}</div>
         <div className="mt-2 flex items-center justify-between text-xs">
@@ -290,13 +313,16 @@ export default function Indents() {
   if (isFranchiseMgr) {
     return (
       <div className="space-y-6" data-testid="indents-page">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
             <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">My Orders</div>
             <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight mt-2">My Indents</h1>
             <p className="text-sm text-muted-foreground mt-1">Raise indents and track their fulfillment status.</p>
           </div>
-          <Button onClick={() => setCreating(true)} data-testid="new-indent-btn"><Plus size={14} className="mr-2" /> Raise Indent</Button>
+          <div className="flex items-center gap-2">
+            <DateFilter value={dateRange} onChange={setDateRange} storageKey="df:indents-fr" />
+            <Link to="/indents/new"><Button data-testid="new-indent-btn"><Plus size={14} className="mr-2" /> New Order</Button></Link>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -360,13 +386,27 @@ export default function Indents() {
   // Warehouse / Admin / Accountant: Kanban view
   return (
     <div className="space-y-6" data-testid="indents-page">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Fulfillment</div>
           <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight mt-2">Warehouse Fulfillment Queue</h1>
           <p className="text-sm text-muted-foreground mt-1">Allocate stock, partial fulfill, reject or dispatch indents.</p>
         </div>
-        <Button onClick={() => setCreating(true)} data-testid="new-indent-btn"><Plus size={14} className="mr-2" /> Raise Indent</Button>
+        <div className="flex items-center gap-2">
+          <select
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value)}
+            className="rounded-md border border-border bg-card px-3 py-2 text-sm"
+            data-testid="source-filter"
+          >
+            <option value="">All sources</option>
+            <option value="system">System</option>
+            <option value="photo">Photo</option>
+            <option value="excel">Excel</option>
+          </select>
+          <DateFilter value={dateRange} onChange={setDateRange} storageKey="df:indents" />
+          <Link to="/indents/new"><Button data-testid="new-indent-btn"><Plus size={14} className="mr-2" /> New Order</Button></Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3">

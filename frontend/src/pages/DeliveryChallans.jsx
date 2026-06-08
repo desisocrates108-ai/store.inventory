@@ -3,6 +3,7 @@ import api, { formatINR } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Truck, QrCode, Receipt } from "@phosphor-icons/react";
+import DateFilter, { dateQuery } from "@/components/DateFilter";
 
 const STATUS_COLOR = {
   draft: "bg-zinc-500/10 text-zinc-600 border-zinc-500/30",
@@ -14,15 +15,24 @@ const STATUS_COLOR = {
 export default function DeliveryChallans() {
   const [list, setList] = useState([]);
   const [open, setOpen] = useState(null);
+  const [dateRange, setDateRange] = useState({ preset: "all", from: "", to: "" });
 
-  useEffect(() => { api.get("/delivery-challans").then((r) => setList(r.data)); }, []);
+  useEffect(() => {
+    const q = dateQuery(dateRange);
+    const params = new URLSearchParams(q).toString();
+    const url = params ? `/filtered/delivery-challans?${params}` : "/delivery-challans";
+    api.get(url).then((r) => setList(r.data));
+  }, [dateRange]);
 
   return (
     <div className="space-y-6" data-testid="dc-page">
-      <div>
-        <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Logistics</div>
-        <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight mt-2">Delivery Challans & GST Invoices</h1>
-        <p className="text-sm text-muted-foreground mt-1">DC → Verified → Tax Invoice pipeline.</p>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Logistics</div>
+          <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight mt-2">Delivery Challans & GST Invoices</h1>
+          <p className="text-sm text-muted-foreground mt-1">DC → Verified → Tax Invoice pipeline.</p>
+        </div>
+        <DateFilter value={dateRange} onChange={setDateRange} storageKey="df:delivery-challans" />
       </div>
 
       <div className="rounded-md border border-border overflow-hidden bg-card">

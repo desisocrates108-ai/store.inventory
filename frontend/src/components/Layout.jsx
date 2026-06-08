@@ -5,12 +5,13 @@ import { useTheme } from "@/lib/theme";
 import {
   House, Package, FileText, Truck, Users, Storefront, ChartBar,
   ListMagnifyingGlass, ClipboardText, ShieldCheck, Receipt, CurrencyInr,
-  Sun, Moon, SignOut, MagnifyingGlass, List as MenuIcon, X,
+  Sun, Moon, SignOut, MagnifyingGlass, List as MenuIcon, X, UploadSimple, Crown,
 } from "@phosphor-icons/react";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: House, roles: null },
   { to: "/inventory", label: "Inventory", icon: Package, roles: null },
+  { to: "/inventory/bulk-import", label: "Bulk Import", icon: UploadSimple, roles: ["super_admin", "warehouse_manager", "hub_accountant"] },
   { to: "/stock-entry", label: "Stock Entry (OCR)", icon: FileText, roles: ["super_admin", "hub_accountant", "warehouse_manager"] },
   { to: "/purchase-orders", label: "Purchase Orders", icon: ClipboardText, roles: ["super_admin", "hub_accountant", "warehouse_manager"] },
   { to: "/vendors", label: "Vendors", icon: Users, roles: ["super_admin", "hub_accountant", "warehouse_manager"] },
@@ -19,7 +20,8 @@ const NAV = [
   { to: "/delivery-challans", label: "Delivery Challans", icon: Truck, roles: null },
   { to: "/aging", label: "Inventory Aging", icon: ChartBar, roles: ["super_admin", "hub_accountant", "warehouse_manager"] },
   { to: "/cycle-count", label: "Cycle Count", icon: ListMagnifyingGlass, roles: ["super_admin", "warehouse_manager"] },
-  { to: "/pricing", label: "Pricing Engine", icon: CurrencyInr, roles: ["super_admin"] },
+  { to: "/pricing", label: "Pricing Engine", icon: CurrencyInr, roles: ["super_admin", "hub_accountant"] },
+  { to: "/pricing/tiers", label: "Franchise Tiers", icon: Crown, roles: ["super_admin", "hub_accountant"] },
   { to: "/audit-logs", label: "Audit Logs", icon: ShieldCheck, roles: ["super_admin", "hub_accountant"] },
 ];
 

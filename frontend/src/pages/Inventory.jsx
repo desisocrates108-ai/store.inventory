@@ -9,7 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
-import { MagnifyingGlass, Funnel, Package, MapPin } from "@phosphor-icons/react";
+import { MagnifyingGlass, Funnel, Package, MapPin, UploadSimple } from "@phosphor-icons/react";
+import { Link } from "react-router-dom";
 
 export default function Inventory() {
   const { user } = useAuth();
@@ -80,6 +81,13 @@ export default function Inventory() {
           <Button variant={showLow ? "default" : "outline"} onClick={() => setShowLow((s) => !s)} data-testid="filter-low-stock">
             <Funnel size={14} className="mr-2" /> Low Stock
           </Button>
+          {canEdit && (
+            <Link to="/inventory/bulk-import">
+              <Button variant="outline" data-testid="bulk-import-link">
+                <UploadSimple size={14} className="mr-2" /> Bulk Import
+              </Button>
+            </Link>
+          )}
         </div>
       </div>
 

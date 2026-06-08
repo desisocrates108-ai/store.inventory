@@ -1,10 +1,15 @@
-import React, { useEffect, useState } from "react";
-import api, { formatINR } from "@/lib/api";
+import React, { useEffect, useMemo, useState } from "react";
+import api, { formatINR, BACKEND_URL } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
-import { Lightning, ClipboardText } from "@phosphor-icons/react";
+import { Lightning, ClipboardText, Plus, Trash, FilePdf, PencilSimple, FloppyDisk } from "@phosphor-icons/react";
+import DateFilter, { dateQuery } from "@/components/DateFilter";
 
 const STATUS_COLOR = {
   draft: "bg-zinc-500/10 text-zinc-600 border-zinc-500/30",
@@ -17,10 +22,25 @@ export default function PurchaseOrders() {
   const { user } = useAuth();
   const [pos, setPos] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [dateRange, setDateRange] = useState({ preset: "all", from: "", to: "" });
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editing, setEditing] = useState(null); // {id?, vendor_id, line_items, notes, status}
+  const [vendors, setVendors] = useState([]);
+  const [products, setProducts] = useState([]);
   const canManage = ["super_admin", "warehouse_manager", "hub_accountant"].includes(user?.role);
 
-  const load = () => api.get("/purchase-orders").then((r) => setPos(r.data));
-  useEffect(() => { load(); }, []);
+  const load = async () => {
+    const q = dateQuery(dateRange);
+    const params = new URLSearchParams(q).toString();
+    const url = params ? `/filtered/purchase-orders?${params}` : "/purchase-orders";
+    const r = await api.get(url);
+    setPos(r.data);
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [dateRange]);
+  useEffect(() => {
+    api.get("/vendors").then((r) => setVendors(r.data));
+    api.get("/products?limit=2000").then((r) => setProducts(r.data));
+  }, []);
 
   const autoGenerate = async () => {
     setBusy(true);
@@ -42,19 +62,56 @@ export default function PurchaseOrders() {
     } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
   };
 
+  const openNew = () => {
+    setEditing({ vendor_id: "", line_items: [], notes: "", status: "draft" });
+    setEditorOpen(true);
+  };
+
+  const openEdit = (po) => {
+    setEditing({
+      id: po.id,
+      vendor_id: po.vendor_id,
+      notes: po.notes || "",
+      status: po.status,
+      line_items: (po.line_items || []).map((li) => ({
+        product_id: li.product_id, sku: li.sku, product_name: li.product_name,
+        quantity: li.quantity, unit_price: li.unit_price,
+      })),
+    });
+    setEditorOpen(true);
+  };
+
+  const downloadPdf = async (po) => {
+    const token = localStorage.getItem("nexus_token");
+    const r = await fetch(`${BACKEND_URL}/api/purchase-orders/${po.id}/pdf`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!r.ok) { toast.error("Could not generate PDF"); return; }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `${po.po_number}.pdf`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-6" data-testid="po-page">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Procurement</div>
           <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight mt-2">Purchase Orders</h1>
-          <p className="text-sm text-muted-foreground mt-1">Auto-draft POs when stock dips below safety threshold.</p>
+          <p className="text-sm text-muted-foreground mt-1">Edit draft POs before sending — add/remove items, change vendor or rates.</p>
         </div>
-        {canManage && (
-          <Button onClick={autoGenerate} disabled={busy} data-testid="auto-generate-po-btn">
-            <Lightning size={14} className="mr-2" /> {busy ? "Scanning…" : "Auto-Generate from Low Stock"}
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <DateFilter value={dateRange} onChange={setDateRange} storageKey="df:purchase-orders" />
+          {canManage && (
+            <>
+              <Button variant="outline" onClick={autoGenerate} disabled={busy} data-testid="auto-generate-po-btn">
+                <Lightning size={14} className="mr-2" /> {busy ? "Scanning…" : "Auto-Generate"}
+              </Button>
+              <Button onClick={openNew} data-testid="new-po-btn"><Plus size={14} className="mr-2" /> New PO</Button>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="rounded-md border border-border overflow-hidden bg-card">
@@ -79,31 +136,195 @@ export default function PurchaseOrders() {
                 </td>
                 <td className="px-4 py-3">{po.line_items?.length || 0}</td>
                 <td className="px-4 py-3 text-right tabular-nums">{formatINR(po.total_amount)}</td>
-                <td className="px-4 py-3">
-                  <Badge variant="outline" className={`text-[11px] ${STATUS_COLOR[po.status]}`}>{po.status}</Badge>
-                </td>
+                <td className="px-4 py-3"><Badge variant="outline" className={`text-[11px] ${STATUS_COLOR[po.status]}`}>{po.status}</Badge></td>
                 <td className="px-4 py-3 text-right">
-                  {canManage && po.status === "draft" && (
-                    <div className="flex gap-1 justify-end">
-                      <Button size="sm" variant="outline" onClick={() => setStatus(po.id, "sent")}>Send</Button>
-                      <Button size="sm" variant="ghost" onClick={() => setStatus(po.id, "cancelled")}>Cancel</Button>
-                    </div>
-                  )}
-                  {canManage && po.status === "sent" && (
-                    <Button size="sm" variant="outline" onClick={() => setStatus(po.id, "received")}>Mark Received</Button>
-                  )}
+                  <div className="flex gap-1 justify-end">
+                    <Button size="sm" variant="ghost" onClick={() => downloadPdf(po)} title="Download PDF" data-testid={`po-pdf-${po.po_number}`}><FilePdf size={14} /></Button>
+                    {canManage && po.status === "draft" && (
+                      <>
+                        <Button size="sm" variant="outline" onClick={() => openEdit(po)} data-testid={`po-edit-${po.po_number}`}><PencilSimple size={14} className="mr-1" /> Edit</Button>
+                        <Button size="sm" variant="outline" onClick={() => setStatus(po.id, "sent")} data-testid={`po-send-${po.po_number}`}>Send</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setStatus(po.id, "cancelled")}>Cancel</Button>
+                      </>
+                    )}
+                    {canManage && po.status === "sent" && (
+                      <Button size="sm" variant="outline" onClick={() => setStatus(po.id, "received")} data-testid={`po-receive-${po.po_number}`}>Mark Received</Button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
             {pos.length === 0 && (
               <tr><td colSpan={6} className="p-12 text-center text-muted-foreground">
                 <ClipboardText size={32} className="mx-auto mb-2 opacity-50" />
-                No purchase orders yet. Use Auto-Generate to scan low-stock items.
+                No purchase orders in selected range.
               </td></tr>
             )}
           </tbody>
         </table>
       </div>
+
+      <POEditorDialog
+        open={editorOpen}
+        onClose={() => { setEditorOpen(false); setEditing(null); }}
+        editing={editing}
+        setEditing={setEditing}
+        vendors={vendors}
+        products={products}
+        onSaved={() => { setEditorOpen(false); setEditing(null); load(); }}
+      />
     </div>
+  );
+}
+
+function POEditorDialog({ open, onClose, editing, setEditing, vendors, products, onSaved }) {
+  const [search, setSearch] = useState("");
+  const [busy, setBusy] = useState(false);
+  const isEdit = !!editing?.id;
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [];
+    return products.filter(p =>
+      p.sku?.toLowerCase().includes(q) || p.name?.toLowerCase().includes(q)
+    ).slice(0, 8);
+  }, [products, search]);
+
+  if (!editing) return null;
+
+  const addLine = (p) => {
+    if (editing.line_items?.find((i) => i.product_id === p.id)) return;
+    setEditing({
+      ...editing,
+      line_items: [...editing.line_items, {
+        product_id: p.id, sku: p.sku, product_name: p.name,
+        quantity: 1, unit_price: p.landing_price || 0,
+      }],
+    });
+    setSearch("");
+  };
+
+  const updateLine = (id, field, val) => {
+    setEditing({
+      ...editing,
+      line_items: editing.line_items.map(li => li.product_id === id ? { ...li, [field]: field === "product_name" ? val : Number(val) || 0 } : li),
+    });
+  };
+
+  const removeLine = (id) => {
+    setEditing({ ...editing, line_items: editing.line_items.filter(li => li.product_id !== id) });
+  };
+
+  const total = (editing.line_items || []).reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0), 0);
+
+  const save = async (saveAs = editing.status || "draft") => {
+    if (!editing.vendor_id) { toast.error("Pick a vendor"); return; }
+    if (!editing.line_items?.length) { toast.error("Add at least one line"); return; }
+    setBusy(true);
+    try {
+      const body = {
+        vendor_id: editing.vendor_id,
+        notes: editing.notes || "",
+        status: saveAs,
+        line_items: editing.line_items.map(li => ({
+          product_id: li.product_id, quantity: Number(li.quantity), unit_price: Number(li.unit_price),
+        })),
+      };
+      if (isEdit) await api.put(`/purchase-orders/${editing.id}`, body);
+      else await api.post("/purchase-orders", body);
+      toast.success(isEdit ? "PO updated" : "PO created");
+      onSaved();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Save failed");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-4xl">
+        <DialogHeader><DialogTitle className="font-display">{isEdit ? "Edit Purchase Order" : "New Purchase Order"}</DialogTitle></DialogHeader>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Vendor</Label>
+              <Select value={editing.vendor_id} onValueChange={(v) => setEditing({ ...editing, vendor_id: v })}>
+                <SelectTrigger data-testid="po-vendor-select"><SelectValue placeholder="Pick a vendor" /></SelectTrigger>
+                <SelectContent>
+                  {vendors.map((v) => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Notes</Label>
+              <Input value={editing.notes || ""} onChange={(e) => setEditing({ ...editing, notes: e.target.value })} placeholder="Delivery instructions…" data-testid="po-notes-input" />
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border">
+            <div className="px-3 py-2 bg-muted/40">
+              <Label>Add SKU</Label>
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search SKU or product name…" className="mt-1" data-testid="po-search-input" />
+              {filtered.length > 0 && (
+                <div className="mt-2 rounded border border-border max-h-48 overflow-y-auto bg-background">
+                  {filtered.map(p => (
+                    <button key={p.id} onClick={() => addLine(p)} className="block w-full text-left px-3 py-1.5 hover:bg-muted text-sm border-b border-border last:border-b-0" data-testid={`po-add-${p.sku}`}>
+                      <span className="font-mono text-xs text-muted-foreground mr-2">{p.sku}</span>{p.name}
+                      <span className="float-right tabular-nums text-xs">{formatINR(p.landing_price)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <table className="w-full text-sm">
+              <thead className="bg-muted/20 border-t border-border">
+                <tr className="text-left text-xs uppercase text-muted-foreground">
+                  <th className="px-3 py-2">SKU</th>
+                  <th className="px-3 py-2">Product</th>
+                  <th className="px-3 py-2 text-right">Qty</th>
+                  <th className="px-3 py-2 text-right">Rate</th>
+                  <th className="px-3 py-2 text-right">Amount</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {(editing.line_items || []).map((li) => (
+                  <tr key={li.product_id} className="border-t border-border">
+                    <td className="px-3 py-2 font-mono text-xs">{li.sku}</td>
+                    <td className="px-3 py-2">{li.product_name}</td>
+                    <td className="px-3 py-2 text-right">
+                      <Input type="number" min={1} value={li.quantity} onChange={(e) => updateLine(li.product_id, "quantity", e.target.value)} className="w-20 ml-auto h-8" data-testid={`po-qty-${li.sku}`} />
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <Input type="number" min={0} step="0.01" value={li.unit_price} onChange={(e) => updateLine(li.product_id, "unit_price", e.target.value)} className="w-24 ml-auto h-8" data-testid={`po-rate-${li.sku}`} />
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatINR((Number(li.quantity) || 0) * (Number(li.unit_price) || 0))}</td>
+                    <td className="px-3 py-2 text-right">
+                      <button onClick={() => removeLine(li.product_id)} className="rounded p-1 hover:bg-destructive/10 text-destructive" data-testid={`po-remove-${li.sku}`}><Trash size={14} /></button>
+                    </td>
+                  </tr>
+                ))}
+                {(editing.line_items || []).length === 0 && (
+                  <tr><td colSpan={6} className="px-3 py-6 text-center text-xs text-muted-foreground">No items yet — search above to add.</td></tr>
+                )}
+              </tbody>
+              <tfoot>
+                <tr className="bg-muted/40 border-t border-border font-medium">
+                  <td colSpan={4} className="px-3 py-2 text-right">Total</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{formatINR(total)}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="outline" onClick={() => save("draft")} disabled={busy} data-testid="po-save-draft-btn">
+            <FloppyDisk size={14} className="mr-1" /> Save Draft
+          </Button>
+          <Button onClick={() => save("sent")} disabled={busy} data-testid="po-save-send-btn">Save & Send</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

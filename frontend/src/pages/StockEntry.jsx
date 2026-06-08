@@ -13,6 +13,9 @@ export default function StockEntry() {
   const [invoice, setInvoice] = useState(null);
   const [duplicate, setDuplicate] = useState(false);
   const [error, setError] = useState(null);
+  const [confidence, setConfidence] = useState(0);
+  const [invalidRows, setInvalidRows] = useState(0);
+  const [ocrMeta, setOcrMeta] = useState({});
 
   const handleFile = useCallback(async (file) => {
     if (!file) return;
@@ -25,8 +28,11 @@ export default function StockEntry() {
       setInvoice(r.data.invoice);
       setDuplicate(!!r.data.duplicate_invoice_number);
       setError(r.data.error || null);
+      setConfidence(r.data.confidence_score || 0);
+      setInvalidRows(r.data.invalid_rows || 0);
+      setOcrMeta({ provider: r.data.ocr_provider, model: r.data.ocr_model });
       if (r.data.error) toast.error("OCR partial: " + r.data.error);
-      else toast.success("Invoice parsed");
+      else toast.success(`Invoice parsed · ${(r.data.confidence_score * 100).toFixed(0)}% confidence`);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Upload failed");
     } finally {
@@ -43,7 +49,19 @@ export default function StockEntry() {
   const updateLine = (idx, key, value) => {
     setInvoice((inv) => {
       const li = [...inv.line_items];
-      li[idx] = { ...li[idx], [key]: value };
+      const next = { ...li[idx], [key]: value };
+      // Re-validate row client-side so the red banner updates on edit
+      const qtyOk = Number(next.quantity) > 0;
+      const hsn = String(next.hsn_code || "").trim();
+      const hsnOk = /^\d{4,8}$/.test(hsn);
+      const descOk = !!String(next.product_name || "").trim();
+      next.qty_valid = qtyOk;
+      next.hsn_valid = hsnOk;
+      next.desc_valid = descOk;
+      next.row_valid = qtyOk && hsnOk && descOk;
+      li[idx] = next;
+      const invalid = li.filter((x) => x.row_valid === false).length;
+      setInvalidRows(invalid);
       return { ...inv, line_items: li };
     });
   };
@@ -139,10 +157,35 @@ export default function StockEntry() {
           <div className="border border-border rounded-md bg-card">
             <div className="border-b border-border px-4 py-3 flex items-center justify-between">
               <div className="text-sm font-medium flex items-center gap-2"><Sparkle size={14} /> Parsed Data — Reconcile</div>
-              {duplicate && (
-                <Badge variant="destructive" className="text-[10px]"><WarningCircle size={10} className="mr-1" /> Duplicate invoice #</Badge>
-              )}
+              <div className="flex items-center gap-2">
+                {confidence > 0 && (
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] ${confidence > 0.8 ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30" : confidence > 0.5 ? "bg-amber-500/10 text-amber-600 border-amber-500/30" : "bg-destructive/10 text-destructive border-destructive/30"}`}
+                    data-testid="ocr-confidence"
+                  >
+                    {(confidence * 100).toFixed(0)}% confidence
+                  </Badge>
+                )}
+                {ocrMeta?.model && (
+                  <Badge variant="outline" className="text-[10px] text-muted-foreground" title={`${ocrMeta.provider}/${ocrMeta.model}`}>
+                    {ocrMeta.model}
+                  </Badge>
+                )}
+                {duplicate && (
+                  <Badge variant="destructive" className="text-[10px]"><WarningCircle size={10} className="mr-1" /> Duplicate invoice #</Badge>
+                )}
+              </div>
             </div>
+            {invalidRows > 0 && (
+              <div className="mx-4 mt-3 rounded bg-destructive/10 border border-destructive/30 px-3 py-2 text-xs text-destructive flex items-start gap-2" data-testid="invalid-rows-banner">
+                <WarningCircle size={14} className="mt-0.5" />
+                <div>
+                  <div className="font-medium">{invalidRows} row{invalidRows !== 1 ? "s" : ""} have validation issues</div>
+                  <div className="opacity-80">Fix qty / HSN / description before committing — they cannot be auto-imported.</div>
+                </div>
+              </div>
+            )}
             {error && (
               <div className="mx-4 mt-3 rounded bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-xs text-amber-700 dark:text-amber-400 flex items-start gap-2">
                 <WarningCircle size={14} className="mt-0.5" />
@@ -165,7 +208,8 @@ export default function StockEntry() {
                   <thead className="bg-muted/40">
                     <tr className="text-left text-muted-foreground">
                       <th className="px-3 py-2">Product</th>
-                      <th className="px-3 py-2">SKU</th>
+                      <th className="px-3 py-2">SKU / Alias</th>
+                      <th className="px-3 py-2">HSN</th>
                       <th className="px-3 py-2 text-right">Qty</th>
                       <th className="px-3 py-2 text-right">Unit ₹</th>
                       <th className="px-3 py-2 text-right">GST%</th>
@@ -174,10 +218,13 @@ export default function StockEntry() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(invoice.line_items || []).map((li, i) => (
-                      <tr key={i} className={`border-t border-border ${li.anomaly ? "bg-amber-500/5" : ""}`}>
+                    {(invoice.line_items || []).map((li, i) => {
+                      const invalid = (li.row_valid === false) || !li.hsn_valid || !li.qty_valid || !li.desc_valid;
+                      const conf = typeof li.confidence === "number" ? li.confidence : 1;
+                      return (
+                      <tr key={i} className={`border-t border-border ${invalid ? "bg-destructive/5" : li.anomaly ? "bg-amber-500/5" : ""}`} data-testid={`ocr-row-${i}`}>
                         <td className="px-3 py-2">
-                          <Input value={li.product_name} onChange={(e) => updateLine(i, "product_name", e.target.value)} className="h-8 text-xs" />
+                          <Input value={li.product_name} onChange={(e) => updateLine(i, "product_name", e.target.value)} className={`h-8 text-xs ${!li.desc_valid ? "border-destructive" : ""}`} data-testid={`row-desc-${i}`} />
                           {li.anomaly && (
                             <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
                               <WarningCircle size={10} /> {li.anomaly}
@@ -186,19 +233,31 @@ export default function StockEntry() {
                           {!li.anomaly && li.matched && (
                             <div className="mt-1 text-[10px] text-emerald-600 flex items-center gap-1">
                               <CheckCircle size={10} /> Matched to catalog
+                              {li.item_alias && <span className="text-muted-foreground">· alias: <span className="font-mono">{li.item_alias}</span></span>}
+                            </div>
+                          )}
+                          {invalid && (
+                            <div className="mt-1 text-[10px] text-destructive flex items-center gap-1">
+                              <WarningCircle size={10} />
+                              {!li.qty_valid && "Qty invalid · "}
+                              {!li.hsn_valid && "HSN missing · "}
+                              {!li.desc_valid && "Description missing · "}
+                              conf {Math.round(conf * 100)}%
                             </div>
                           )}
                         </td>
-                        <td className="px-3 py-2"><Input value={li.sku} onChange={(e) => updateLine(i, "sku", e.target.value)} className="h-8 text-xs font-mono" /></td>
-                        <td className="px-3 py-2 text-right"><Input type="number" value={li.quantity} onChange={(e) => updateLine(i, "quantity", Number(e.target.value))} className="h-8 text-xs text-right" /></td>
+                        <td className="px-3 py-2"><Input value={li.sku} onChange={(e) => updateLine(i, "sku", e.target.value)} className="h-8 text-xs font-mono" data-testid={`row-sku-${i}`} /></td>
+                        <td className="px-3 py-2"><Input value={li.hsn_code || ""} onChange={(e) => updateLine(i, "hsn_code", e.target.value)} className={`h-8 text-xs font-mono w-24 ${!li.hsn_valid ? "border-destructive" : ""}`} data-testid={`row-hsn-${i}`} /></td>
+                        <td className="px-3 py-2 text-right"><Input type="number" value={li.quantity} onChange={(e) => updateLine(i, "quantity", Number(e.target.value))} className={`h-8 text-xs text-right ${!li.qty_valid ? "border-destructive" : ""}`} data-testid={`row-qty-${i}`} /></td>
                         <td className="px-3 py-2 text-right"><Input type="number" value={li.unit_price} onChange={(e) => updateLine(i, "unit_price", Number(e.target.value))} className="h-8 text-xs text-right" /></td>
                         <td className="px-3 py-2 text-right"><Input type="number" value={li.gst_percent} onChange={(e) => updateLine(i, "gst_percent", Number(e.target.value))} className="h-8 text-xs text-right w-16" /></td>
                         <td className="px-3 py-2 text-right tabular-nums">{formatINR(li.line_total)}</td>
                         <td className="px-3 py-2"><button onClick={() => removeLine(i)} className="text-muted-foreground hover:text-destructive text-[11px]">✕</button></td>
                       </tr>
-                    ))}
+                      );
+                    })}
                     {(invoice.line_items || []).length === 0 && (
-                      <tr><td colSpan={7} className="text-center text-muted-foreground py-6">No items parsed.</td></tr>
+                      <tr><td colSpan={8} className="text-center text-muted-foreground py-6">No items parsed.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -207,9 +266,9 @@ export default function StockEntry() {
 
             <div className="border-t border-border p-4 flex items-center justify-between">
               <Button variant="outline" onClick={() => setInvoice(null)} data-testid="discard-invoice-btn">Discard</Button>
-              <Button onClick={commit} disabled={duplicate} data-testid="commit-invoice-btn">
+              <Button onClick={commit} disabled={duplicate || invalidRows > 0} data-testid="commit-invoice-btn">
                 <CheckCircle size={14} className="mr-2" />
-                {duplicate ? "Duplicate – cannot commit" : "Commit to Hub Stock"}
+                {duplicate ? "Duplicate – cannot commit" : invalidRows > 0 ? `Fix ${invalidRows} invalid row${invalidRows !== 1 ? "s" : ""}` : "Commit to Hub Stock"}
               </Button>
             </div>
           </div>

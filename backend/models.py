@@ -64,6 +64,26 @@ class Franchise(BaseModel):
     contact_email: str = ""
     credit_limit: float = 0.0
     active: bool = True
+    tier_id: Optional[str] = None  # V2.1 — franchise pricing tier
+    created_at: str = Field(default_factory=now_iso)
+
+
+# ============ FRANCHISE TIERS (V2.1) ============
+class CategoryMarginOverride(BaseModel):
+    """Optional per-category margin override inside a tier."""
+    category: str
+    margin_percent: float
+
+
+class FranchiseTier(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=gen_id)
+    name: str  # MASTER / STANDARD / BUDDY / PERFORMAX / custom
+    margin_percent: float = 22.0  # default margin applied if no category override
+    category_overrides: List[CategoryMarginOverride] = []
+    color: str = ""  # hex e.g. "#10b981" — for UI badges
+    is_system: bool = False  # if true, cannot be deleted
+    active: bool = True
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -140,6 +160,7 @@ class StockItem(BaseModel):
 
 # ============ INVOICES (purchase) ============
 class InvoiceLineItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     product_id: Optional[str] = None  # null if unmatched
     product_name: str
     sku: str = ""
@@ -150,6 +171,17 @@ class InvoiceLineItem(BaseModel):
     line_total: float
     matched: bool = True
     anomaly: Optional[str] = None  # e.g., "price_increased_15%"
+    # V2.1 OCR extras (all optional, back-compat safe)
+    item_alias: str = ""
+    unit: str = ""
+    cgst_percent: float = 0.0
+    sgst_percent: float = 0.0
+    net_amount: float = 0.0
+    qty_valid: bool = True
+    hsn_valid: bool = True
+    desc_valid: bool = True
+    row_valid: bool = True
+    confidence: float = 1.0
 
 
 class PurchaseInvoice(BaseModel):
@@ -167,7 +199,23 @@ class PurchaseInvoice(BaseModel):
     file_url: str = ""  # path stored
     status: Literal["draft", "reconciled", "committed"] = "draft"
     raw_ocr_text: str = ""
+    confidence_score: float = 0.0  # V2.1 — avg across rows
+    ocr_provider: str = ""
+    ocr_model: str = ""
     created_by: str = ""
+    created_at: str = Field(default_factory=now_iso)
+
+
+# ============ OCR LEARNING ENGINE (V2.1) ============
+class OcrAlias(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=gen_id)
+    vendor_id: Optional[str] = None
+    vendor_alias: str  # vendor's short code, e.g. "RES02", "AT24026"
+    product_id: str
+    sku: str
+    hits: int = 1
+    last_used_at: str = Field(default_factory=now_iso)
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -242,6 +290,9 @@ class Indent(BaseModel):
     dispatched_at: Optional[str] = None
     delivered_at: Optional[str] = None
     eta: Optional[str] = None
+    # V2.1 — multi-source ordering
+    source: Literal["system", "photo", "excel"] = "system"
+    source_attachment_url: Optional[str] = None  # /uploads/... for photo/excel
 
 
 # ============ DELIVERY CHALLANS / INVOICES ============

@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { ShieldCheck } from "@phosphor-icons/react";
+import DateFilter, { dateQuery } from "@/components/DateFilter";
 
 const ACTION_COLORS = {
   create: "text-emerald-600",
@@ -23,17 +25,30 @@ const getActionTone = (action) => {
 export default function AuditLogs() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [dateRange, setDateRange] = useState({ preset: "all", from: "", to: "" });
+  const [actionFilter, setActionFilter] = useState("");
 
   useEffect(() => {
-    api.get("/audit-logs?limit=200").then((r) => { setLogs(r.data); setLoading(false); });
-  }, []);
+    setLoading(true);
+    const q = dateQuery(dateRange);
+    if (actionFilter) q.action = actionFilter;
+    const params = new URLSearchParams(q).toString();
+    const url = params ? `/filtered/audit-logs?${params}` : "/audit-logs?limit=200";
+    api.get(url).then((r) => { setLogs(r.data); setLoading(false); });
+  }, [dateRange, actionFilter]);
 
   return (
     <div className="space-y-6" data-testid="audit-page">
-      <div>
-        <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Compliance</div>
-        <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight mt-2">Audit Logs</h1>
-        <p className="text-sm text-muted-foreground mt-1">Immutable trail of every action across Servall Nexus.</p>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Compliance</div>
+          <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight mt-2">Audit Logs</h1>
+          <p className="text-sm text-muted-foreground mt-1">Immutable trail of every action across Servall Nexus.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Input value={actionFilter} onChange={(e) => setActionFilter(e.target.value)} placeholder="Filter action…" className="w-44 h-9 text-sm" data-testid="audit-action-filter" />
+          <DateFilter value={dateRange} onChange={setDateRange} storageKey="df:audit-logs" />
+        </div>
       </div>
 
       <div className="rounded-md border border-border bg-card overflow-hidden">

@@ -3,9 +3,11 @@ import api, { formatINR } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Plus, Storefront, MapPin, Phone } from "@phosphor-icons/react";
+import { Plus, Storefront, MapPin, Phone, Crown } from "@phosphor-icons/react";
 import { useAuth } from "@/lib/auth";
 
 const empty = {
@@ -16,11 +18,28 @@ const empty = {
 export default function Franchises() {
   const { user } = useAuth();
   const [list, setList] = useState([]);
+  const [tiers, setTiers] = useState([]);
   const [editing, setEditing] = useState(null);
   const canEdit = user?.role === "super_admin";
+  const canAssignTier = ["super_admin", "hub_accountant"].includes(user?.role);
 
   const load = () => api.get("/franchises").then((r) => setList(r.data));
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    api.get("/franchise-tiers").then((r) => setTiers(r.data));
+  }, []);
+
+  const tierById = (id) => tiers.find((t) => t.id === id);
+
+  const assignTier = async (franchiseId, tierId) => {
+    try {
+      await api.put(`/franchises/${franchiseId}/tier`, { tier_id: tierId || null });
+      toast.success("Tier updated");
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed");
+    }
+  };
 
   const save = async () => {
     try {
@@ -63,6 +82,29 @@ export default function Franchises() {
               <div className="flex items-center gap-2"><MapPin size={12} /> {f.city}, {f.state}</div>
               <div className="flex items-center gap-2"><Phone size={12} /> {f.contact_phone}</div>
               <div className="font-mono">{f.gstin}</div>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              {(() => {
+                const t = tierById(f.tier_id);
+                return t ? (
+                  <Badge variant="outline" className="text-[10px] gap-1" style={{ borderColor: t.color + "55", color: t.color }} data-testid={`tier-badge-${f.code}`}>
+                    <Crown size={10} weight="duotone" />
+                    {t.name} · {t.margin_percent}%
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[10px] text-muted-foreground">No tier</Badge>
+                );
+              })()}
+              {canAssignTier && (
+                <Select value={f.tier_id || ""} onValueChange={(v) => assignTier(f.id, v)}>
+                  <SelectTrigger className="h-7 text-xs" data-testid={`tier-select-${f.code}`}><SelectValue placeholder="Change tier" /></SelectTrigger>
+                  <SelectContent>
+                    {tiers.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>{t.name} ({t.margin_percent}%)</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             <div className="mt-4 pt-4 border-t border-border flex items-center justify-between text-xs">
               <div>
