@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { toast } from "sonner";
 import { Plus, Users, Star } from "@phosphor-icons/react";
 import { useAuth } from "@/lib/auth";
+import DateFilter from "@/components/DateFilter";
 
 const empty = {
   code: "", name: "", gstin: "", address: "", contact_phone: "", contact_email: "",
@@ -18,10 +19,21 @@ export default function Vendors() {
   const { user } = useAuth();
   const [vendors, setVendors] = useState([]);
   const [editing, setEditing] = useState(null);
+  const [dateRange, setDateRange] = useState({ preset: "all", from: "", to: "" });
   const canEdit = ["super_admin", "hub_accountant"].includes(user?.role);
 
   const load = () => api.get("/vendors").then((r) => setVendors(r.data));
   useEffect(() => { load(); }, []);
+
+  const filteredVendors = React.useMemo(() => {
+    if (!dateRange.from && !dateRange.to) return vendors;
+    return vendors.filter((v) => {
+      const d = (v.created_at || "").slice(0, 10);
+      if (dateRange.from && d < dateRange.from) return false;
+      if (dateRange.to && d > dateRange.to) return false;
+      return true;
+    });
+  }, [vendors, dateRange]);
 
   const save = async () => {
     try {
@@ -44,12 +56,18 @@ export default function Vendors() {
           <p className="text-sm text-muted-foreground mt-1">Suppliers, credit terms, and performance.</p>
         </div>
         {canEdit && (
-          <Button onClick={() => setEditing({ ...empty })} data-testid="new-vendor-btn"><Plus size={14} className="mr-2" /> New Vendor</Button>
+          <div className="flex items-center gap-2">
+            <DateFilter value={dateRange} onChange={setDateRange} storageKey="df:vendors" />
+            <Button onClick={() => setEditing({ ...empty })} data-testid="new-vendor-btn"><Plus size={14} className="mr-2" /> New Vendor</Button>
+          </div>
+        )}
+        {!canEdit && (
+          <DateFilter value={dateRange} onChange={setDateRange} storageKey="df:vendors" />
         )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {vendors.map((v) => (
+        {filteredVendors.map((v) => (
           <div key={v.id} className="border border-border rounded-md p-5 bg-card lift-on-hover" data-testid={`vendor-card-${v.code}`}>
             <div className="flex items-start justify-between">
               <div>
@@ -82,6 +100,11 @@ export default function Vendors() {
         {vendors.length === 0 && (
           <div className="col-span-full border border-dashed border-border rounded-md p-12 text-center text-muted-foreground">
             <Users size={32} className="mx-auto mb-2 opacity-50" /> No vendors yet.
+          </div>
+        )}
+        {vendors.length > 0 && filteredVendors.length === 0 && (
+          <div className="col-span-full border border-dashed border-border rounded-md p-8 text-center text-muted-foreground text-sm">
+            No vendors match the selected date range.
           </div>
         )}
       </div>

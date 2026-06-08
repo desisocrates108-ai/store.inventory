@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { toast } from "sonner";
 import { Plus, Storefront, MapPin, Phone, Crown } from "@phosphor-icons/react";
 import { useAuth } from "@/lib/auth";
+import DateFilter from "@/components/DateFilter";
 
 const empty = {
   code: "", name: "", city: "", state: "", address: "", gstin: "",
@@ -20,6 +21,7 @@ export default function Franchises() {
   const [list, setList] = useState([]);
   const [tiers, setTiers] = useState([]);
   const [editing, setEditing] = useState(null);
+  const [dateRange, setDateRange] = useState({ preset: "all", from: "", to: "" });
   const canEdit = user?.role === "super_admin";
   const canAssignTier = ["super_admin", "hub_accountant"].includes(user?.role);
 
@@ -28,6 +30,16 @@ export default function Franchises() {
     load();
     api.get("/franchise-tiers").then((r) => setTiers(r.data));
   }, []);
+
+  const filteredList = React.useMemo(() => {
+    if (!dateRange.from && !dateRange.to) return list;
+    return list.filter((f) => {
+      const d = (f.created_at || "").slice(0, 10);
+      if (dateRange.from && d < dateRange.from) return false;
+      if (dateRange.to && d > dateRange.to) return false;
+      return true;
+    });
+  }, [list, dateRange]);
 
   const tierById = (id) => tiers.find((t) => t.id === id);
 
@@ -61,13 +73,16 @@ export default function Franchises() {
           <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight mt-2">Franchises</h1>
           <p className="text-sm text-muted-foreground mt-1">Service center spokes receiving stock from the hub.</p>
         </div>
-        {canEdit && (
-          <Button onClick={() => setEditing({ ...empty })} data-testid="new-franchise-btn"><Plus size={14} className="mr-2" /> New Franchise</Button>
-        )}
+        <div className="flex items-center gap-2">
+          <DateFilter value={dateRange} onChange={setDateRange} storageKey="df:franchises" />
+          {canEdit && (
+            <Button onClick={() => setEditing({ ...empty })} data-testid="new-franchise-btn"><Plus size={14} className="mr-2" /> New Franchise</Button>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {list.map((f) => (
+        {filteredList.map((f) => (
           <div key={f.id} className="border border-border rounded-md p-5 bg-card lift-on-hover" data-testid={`franchise-card-${f.code}`}>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded bg-foreground text-background">

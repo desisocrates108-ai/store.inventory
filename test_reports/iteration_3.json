@@ -1,0 +1,51 @@
+{
+  "summary": "V2.1 Phase 1 end-to-end review (backend + frontend). Backend: 23/23 new V2.1 tests passing in /app/backend/tests/test_v21_phase1.py covering franchise-tiers CRUD with category_overrides, _resolve_margin preview (Engine Parts override at 15% verified vs 18% MASTER base for other categories), assign tier to franchise, 14-column bulk inventory import validate+commit (creates products idempotently), multi-source indents (legacy /api/indents defaults source='system', /api/indents/excel sets source='excel' with source_attachment_url), editable PO create+edit-draft+PDF download (PDF magic bytes verified), all 7 /api/filtered/* date-filtered endpoints, /api/ocr-aliases. Frontend: admin Mission Control dashboard renders correctly with DateFilter (All time button) and trend chart; franchise dashboard correctly branches to 'My Franchise' layout — no admin label leaks (HUB STOCK VALUE / VENDOR OUTSTANDING etc absent), no 'undefined' text, kpi-my-pending/fulfilled/dispatched/delivered + trend-chart + dashboard-page testids all present. /pricing/tiers renders all 4 seeded tiers, /inventory/bulk-import has file input, /indents/new shows System/Photo/Excel tabs, /purchase-orders renders with DateFilter, /stock-entry has recent-invoices-panel and recent-invoices-table testids, /inventory has inventory-search + filter-low-stock + DateFilter. Sidebar shows all V2.1 pages (Bulk Import, Franchise Tiers, Purchase Orders, Pricing Engine).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "/api/auth/login", "issue": "CREDENTIALS MISMATCH: /app/memory/test_credentials.md and the review_request claim accountant=Account@123, warehouse=Wh@1234, franchise email=franchise.del@servall.com password=Fr@1234. The actual seed.py (lines 22-24) still uses Accountant@123 / Warehouse@123 / franchise@servall.com / Franchise@123. All 3 documented passwords fail with 401 'Invalid email or password'. Only admin@servall.com/Admin@123 matches. This blocks any consumer relying on documented creds.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "/api/auth/me", "issue": "Returns 403 instead of 401 when Authorization header missing (FastAPI HTTPBearer default — cosmetic)"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard (admin)", "issues": ["Recharts width(-1) console warnings on dashboard mount (existing, perf/log warning only — same as iteration 2)"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v21_phase1.py",
+    "/app/backend/tests/test_fulfillment_workflow.py",
+    "/app/backend/tests/test_servall_backend.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_v21.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Resolve the credentials mismatch. Either (a) update /app/backend/seed.py users array (lines 22-24) to use Account@123 / Wh@1234 / Fr@1234 with email franchise.del@servall.com AND re-run seed (idempotent upsert by email) — preferred per review_request — OR (b) update /app/memory/test_credentials.md back to the old passwords. Whichever path, all four documented credentials MUST login successfully. Currently only admin works against documented passwords.",
+    "Note: legacy test file /app/backend/tests/test_servall_backend.py uses the old hard-coded passwords inline (not via conftest) — if seed.py is updated to new passwords, that file's parametrize block (lines 22-24) will break. Either migrate it to use conftest fixtures or sync passwords.",
+    "Minor: server.py is ~1239 lines (carried over from prior iteration) — consider splitting into routers."
+  ],
+  "critical_code_review_comments": [
+    "routers_v21.py is solid: _resolve_margin (line 152) correctly falls back from category override to tier base margin; verified via preview endpoint with Engine Parts=15 override on MASTER (other categories show 18).",
+    "Editable PO: PUT /api/purchase-orders/{poid} correctly blocks edits when status not in {draft, None} (line 746) — protects approved POs.",
+    "Bulk import is idempotent: existing SKU triggers update path when overwrite_existing=True; opening stock applied via _adjust_stock with delta (not absolute) — correct.",
+    "Multi-source indents: source_attachment_url is set by /indents/excel and /indents/photo via public_url; legacy /api/indents continues to work and defaults source to 'system' — backward compatibility preserved.",
+    "Date filter endpoints uniformly use _date_query helper (line 872) — consistent behavior across all 7 routes.",
+    "Frontend: Franchise dashboard branching fix from iteration 2 is in place — no admin labels leak, no 'undefined' strings.",
+    "/pricing/tiers UI shows the 4 seeded tiers with system badges and 'Preview prices' actions — wired correctly.",
+    "test_credentials.md documentation drift from actual seed.py is a process/release hygiene issue — recommend a CI check that seeded users can all login with documented passwords."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (updated to working passwords)",
+    "/app/backend/tests/test_v21_phase1.py (NEW — V2.1 Phase 1 test suite, 23 tests)"
+  ],
+  "success_rate": {"backend": "100% (23/23 V2.1 tests pass using actual seeded credentials)", "frontend": "100% on smoke + V2.1 page checks (Dashboard admin+franchise, Inventory, Indents, NewOrder, PurchaseOrders, StockEntry, FranchiseTiers, BulkImport all render with required data-testids)"},
+  "test_credentials": "ACTUAL working creds: admin@servall.com/Admin@123 ✓; accountant@servall.com/Accountant@123 ✓; warehouse@servall.com/Warehouse@123 ✓; franchise@servall.com/Franchise@123 ✓. Documented creds (Account@123, Wh@1234, Fr@1234, franchise.del@...) all FAIL with 401.",
+  "seed_data_creation": "Test suite creates TEST_TIER_X (deleted in same test), TEST_BULK_001/TEST_BULK_002 products via bulk import, TEST excel-source indents, TEST PO. All TEST_ prefixed; not cleaned but uses >= assertions to remain idempotent.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend V2.1 endpoints are all functional. The single CRITICAL action item is the credentials mismatch — seed.py vs test_credentials.md vs review_request all disagree. Once main agent picks one source of truth and aligns the other two, re-run /app/backend/tests/test_v21_phase1.py and the existing /app/backend/tests/test_fulfillment_workflow.py + test_servall_backend.py (note: test_servall_backend.py uses inline old passwords in TestAuth.test_login_all_demo_accounts parametrize block — needs sync if creds change). All V2.1 frontend pages already wired with correct data-testids; no UI regressions found.",
+  "rca of the issue": "Credentials mismatch RCA: seed.py at /app/backend/seed.py lines 22-24 hard-codes passwords {Accountant@123, Warehouse@123, Franchise@123} and email franchise@servall.com. The seed function (around line 133) writes these to MongoDB via bcrypt hash. Documentation /app/memory/test_credentials.md was updated this session to advertise shorter passwords (Account@123, Wh@1234, Fr@1234) and a new franchise email (franchise.del@servall.com) WITHOUT updating seed.py or re-running the seed. Reproduction: POST /api/auth/login with {email: 'accountant@servall.com', password: 'Account@123'} -> 401; with password 'Accountant@123' -> 200. Mitigation: update seed.py users[] to new credentials, change email franchise@servall.com -> franchise.del@servall.com, then run python -m backend.seed (or however seed is bootstrapped) to upsert. The seed appears idempotent on email key, so existing user docs will need password_hash overwrite (check the upsert logic in seed.py line 130-140)."
+}

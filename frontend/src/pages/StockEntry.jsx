@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { CloudArrowUp, FileText, WarningCircle, CheckCircle, Sparkle } from "@phosphor-icons/react";
+import DateFilter, { dateQuery } from "@/components/DateFilter";
 
 export default function StockEntry() {
   const [dragOver, setDragOver] = useState(false);
@@ -16,6 +17,20 @@ export default function StockEntry() {
   const [confidence, setConfidence] = useState(0);
   const [invalidRows, setInvalidRows] = useState(0);
   const [ocrMeta, setOcrMeta] = useState({});
+  const [recent, setRecent] = useState([]);
+  const [dateRange, setDateRange] = useState({ preset: "all", from: "", to: "" });
+
+  const loadRecent = useCallback(async () => {
+    try {
+      const q = dateQuery(dateRange);
+      const params = new URLSearchParams(q).toString();
+      const url = params ? `/filtered/invoices?${params}` : "/invoices";
+      const r = await api.get(url);
+      setRecent(r.data || []);
+    } catch (_e) { /* ignore */ }
+  }, [dateRange]);
+
+  React.useEffect(() => { loadRecent(); }, [loadRecent]);
 
   const handleFile = useCallback(async (file) => {
     if (!file) return;
@@ -96,10 +111,13 @@ export default function StockEntry() {
 
   return (
     <div className="space-y-6" data-testid="stock-entry-page">
-      <div>
-        <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Hyper-Automated Ingestion</div>
-        <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight mt-2">Stock Entry · AI OCR</h1>
-        <p className="text-sm text-muted-foreground mt-1">Drop a vendor invoice (PDF or image). Gemini reads it, you confirm, stock lands in Hub.</p>
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Hyper-Automated Ingestion</div>
+          <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight mt-2">Stock Entry · AI OCR</h1>
+          <p className="text-sm text-muted-foreground mt-1">Drop a vendor invoice (PDF or image). Gemini reads it, you confirm, stock lands in Hub.</p>
+        </div>
+        <DateFilter value={dateRange} onChange={setDateRange} storageKey="df:invoices" />
       </div>
 
       {!invoice && (
@@ -271,6 +289,51 @@ export default function StockEntry() {
                 {duplicate ? "Duplicate – cannot commit" : invalidRows > 0 ? `Fix ${invalidRows} invalid row${invalidRows !== 1 ? "s" : ""}` : "Commit to Hub Stock"}
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Recent Invoices (date-filtered) */}
+      {!invoice && (
+        <div className="border border-border rounded-md bg-card" data-testid="recent-invoices-panel">
+          <div className="border-b border-border px-4 py-3 flex items-center justify-between">
+            <div className="text-sm font-medium flex items-center gap-2"><FileText size={14} /> Recent Invoices</div>
+            <Badge variant="outline" className="text-[10px]">{recent.length}</Badge>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs" data-testid="recent-invoices-table">
+              <thead className="bg-muted/40">
+                <tr className="text-left text-muted-foreground">
+                  <th className="px-3 py-2">Invoice #</th>
+                  <th className="px-3 py-2">Vendor</th>
+                  <th className="px-3 py-2">Date</th>
+                  <th className="px-3 py-2 text-right">Total</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2 text-right">Confidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recent.slice(0, 50).map((inv) => (
+                  <tr key={inv.id} className="border-t border-border" data-testid={`recent-invoice-${inv.invoice_number}`}>
+                    <td className="px-3 py-2 font-mono">{inv.invoice_number}</td>
+                    <td className="px-3 py-2">{inv.vendor_name}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{inv.invoice_date || (inv.created_at || "").slice(0, 10)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatINR(inv.total_amount)}</td>
+                    <td className="px-3 py-2">
+                      <Badge variant="outline" className={`text-[10px] ${inv.status === "committed" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30" : ""}`}>
+                        {inv.status}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                      {inv.confidence_score ? `${Math.round((inv.confidence_score || 0) * 100)}%` : "—"}
+                    </td>
+                  </tr>
+                ))}
+                {recent.length === 0 && (
+                  <tr><td colSpan={6} className="text-center text-muted-foreground py-8">No invoices in selected range.</td></tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

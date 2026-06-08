@@ -11,24 +11,37 @@ import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
 import { MagnifyingGlass, Funnel, Package, MapPin, UploadSimple } from "@phosphor-icons/react";
 import { Link } from "react-router-dom";
+import DateFilter from "@/components/DateFilter";
 
 export default function Inventory() {
   const { user } = useAuth();
   const [params] = useSearchParams();
-  const [products, setProducts] = useState([]);
+  const [allProducts, setAllProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState(params.get("q") || "");
   const [showLow, setShowLow] = useState(false);
   const [editing, setEditing] = useState(null);
   const [adjust, setAdjust] = useState(null);
+  const [dateRange, setDateRange] = useState({ preset: "all", from: "", to: "" });
   const canEdit = ["super_admin", "warehouse_manager"].includes(user?.role);
 
   const load = async () => {
     setLoading(true);
     const r = await api.get("/products", { params: { q, low_stock: showLow, limit: 500 } });
-    setProducts(r.data);
+    setAllProducts(r.data);
     setLoading(false);
   };
+
+  // Client-side date filtering on product created_at
+  const products = React.useMemo(() => {
+    if (!dateRange.from && !dateRange.to) return allProducts;
+    return allProducts.filter((p) => {
+      const d = (p.created_at || "").slice(0, 10);
+      if (dateRange.from && d < dateRange.from) return false;
+      if (dateRange.to && d > dateRange.to) return false;
+      return true;
+    });
+  }, [allProducts, dateRange]);
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
@@ -73,11 +86,12 @@ export default function Inventory() {
           <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight mt-2">Inventory</h1>
           <p className="text-sm text-muted-foreground mt-1">Unified multi-tier stock — hub & franchises.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <div className="relative">
             <MagnifyingGlass size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="SKU, part number, barcode…" className="pl-9 w-72" data-testid="inventory-search" />
           </div>
+          <DateFilter value={dateRange} onChange={setDateRange} storageKey="df:inventory" />
           <Button variant={showLow ? "default" : "outline"} onClick={() => setShowLow((s) => !s)} data-testid="filter-low-stock">
             <Funnel size={14} className="mr-2" /> Low Stock
           </Button>

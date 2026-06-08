@@ -9,6 +9,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
   BarChart, Bar, Cell,
 } from "recharts";
+import DateFilter, { dateQuery } from "@/components/DateFilter";
 
 const KpiCard = ({ icon: Icon, label, value, sub, tone = "default", testid }) => {
   const toneColor =
@@ -29,10 +30,24 @@ const KpiCard = ({ icon: Icon, label, value, sub, tone = "default", testid }) =>
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [dateRange, setDateRange] = useState({ preset: "all", from: "", to: "" });
+  const [rangeTrend, setRangeTrend] = useState(null); // {series, total}
 
   useEffect(() => {
     api.get("/dashboard/stats").then((r) => setStats(r.data)).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!dateRange.from && !dateRange.to) {
+      setRangeTrend(null);
+      return;
+    }
+    const q = dateQuery(dateRange);
+    const params = new URLSearchParams(q).toString();
+    api.get(`/filtered/dashboard-trend?${params}`)
+      .then((r) => setRangeTrend(r.data))
+      .catch(() => setRangeTrend(null));
+  }, [dateRange]);
 
   if (loading || !stats) {
     return (
@@ -45,17 +60,23 @@ export default function Dashboard() {
     );
   }
 
-  const trendData = stats.trend_7d || [];
+  const trendData = rangeTrend?.series || stats.trend_7d || [];
+  const trendLabel = rangeTrend
+    ? `${dateRange.from} → ${dateRange.to} (${rangeTrend.total} indents)`
+    : "Last 7 Days";
   const topData = (stats.top_products || []).map((t) => ({ name: (t.name || "").slice(0, 20), qty: t.qty }));
 
   // ---- Franchise Manager view: scoped, no hub-level metrics ----
   if (stats.is_franchise) {
     return (
       <div className="space-y-8" data-testid="dashboard-page">
-        <div>
-          <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">My Orders</div>
-          <h1 className="font-display text-4xl sm:text-5xl font-semibold tracking-tight mt-2">My Franchise</h1>
-          <p className="text-sm text-muted-foreground mt-2">Track your indent pipeline and recent activity.</p>
+        <div className="flex items-start justify-between flex-wrap gap-3">
+          <div>
+            <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">My Orders</div>
+            <h1 className="font-display text-4xl sm:text-5xl font-semibold tracking-tight mt-2">My Franchise</h1>
+            <p className="text-sm text-muted-foreground mt-2">Track your indent pipeline and recent activity.</p>
+          </div>
+          <DateFilter value={dateRange} onChange={setDateRange} storageKey="df:dashboard-fr" />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -66,7 +87,7 @@ export default function Dashboard() {
         </div>
 
         <Card className="border-border" data-testid="trend-chart">
-          <CardHeader><CardTitle className="text-base font-display">My Indents — Last 7 Days</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base font-display">My Indents — {trendLabel}</CardTitle></CardHeader>
           <CardContent>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
@@ -96,10 +117,13 @@ export default function Dashboard() {
   // ---- Admin / Warehouse / Accountant Mission Control ----
   return (
     <div className="space-y-8" data-testid="dashboard-page">
-      <div>
-        <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Overview</div>
-        <h1 className="font-display text-4xl sm:text-5xl font-semibold tracking-tight mt-2">Mission Control</h1>
-        <p className="text-sm text-muted-foreground mt-2">Real-time view of stock, fulfillment, and finance across your network.</p>
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Overview</div>
+          <h1 className="font-display text-4xl sm:text-5xl font-semibold tracking-tight mt-2">Mission Control</h1>
+          <p className="text-sm text-muted-foreground mt-2">Real-time view of stock, fulfillment, and finance across your network.</p>
+        </div>
+        <DateFilter value={dateRange} onChange={setDateRange} storageKey="df:dashboard" />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -119,7 +143,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="lg:col-span-2 border-border" data-testid="trend-chart">
           <CardHeader>
-            <CardTitle className="text-base font-display">Indent Volume — Last 7 Days</CardTitle>
+            <CardTitle className="text-base font-display">Indent Volume — {trendLabel}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="h-64">
