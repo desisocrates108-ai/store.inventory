@@ -26,7 +26,7 @@ const EMPTY_LINE = { description: "", hsn: "", qty: 1, unit: "PCS", unit_price: 
 
 export default function TaxInvoiceDetail() {
   const { id } = useParams();
-  const isNew = id === "new";
+  const isNew = !id || id === "new";
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const [inv, setInv] = useState(null);

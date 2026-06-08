@@ -70,7 +70,6 @@ Build a Next-Gen B2B Franchise ERP for Servall — a multi-branch two-wheeler au
 
 ## Backlog
 **P1 — Phase 2 (Next)**
-- **Professional Invoice PDF module**: editable invoice dates, logo, QR (UPI/verification), GST breakdown, WhatsApp share.
 - **Delivery Challan redesign**: professional format, WhatsApp sharing.
 
 **P2 — Phase 3**
@@ -94,7 +93,16 @@ Build a Next-Gen B2B Franchise ERP for Servall — a multi-branch two-wheeler au
 - "Made with Emergent" badge is platform branding; cannot be removed by agent. User must deploy the app (50 credits/month) — production deployments do not show the badge.
 
 ## Changelog
-### v2.2 — OCR Improvement Module (current)
+### v2.2 — Phase 2: Sales Tax Invoice Module (Feb 2026)
+- **OrganizationSettings model** seeded once at startup with sensible defaults; UI `/settings/org` with 4 sections (Company / Tax & Legal / Bank / Invoice Defaults) — gated to super_admin.
+- **TaxInvoice model + 13 endpoints** under `routers_tax_invoice.py`: list (date+status filterable & franchise-scoped), create (manual or `source_type=challan`), update, issue (assigns invoice_number via `counters.tax_invoice` + org prefix), cancel, mark-paid, PDF (A4 GST-compliant via reportlab — inter/intra-state aware columns, totals box, amount-in-words, bank block, signature, terms), mailto deeplink.
+- **Auto-create on DC deliver**: when `org_settings.auto_create_tax_invoice_on_delivery` is ON, hitting `/api/delivery-challans/{id}/deliver` materialises a draft Tax Invoice prefilled from the DC + franchise. Idempotent — re-deliver returns existing invoice.
+- **Always-editable invoices** (per user choice): PUT works in any non-cancelled state; only cancelled invoices reject edits with 409. Frontend `editable` flag mirrors backend.
+- **Frontend**: `TaxInvoices.jsx` list page (KPIs, search, status tabs, date filter, table, PDF/email per-row), `TaxInvoiceDetail.jsx` editor (customer + franchise picker, line items with product picker, totals card with live preview, Save/Issue/Mark-Paid/Cancel/PDF/Email/Back actions). Sidebar nav for hub_accountant + super_admin + franchise_manager (read-only).
+- **No QR / No WhatsApp** on tax invoice (explicitly opted out by user; DC retains its existing WhatsApp + verification QR).
+- **Tests**: +21 new pytests in `test_v22_tax_invoice.py`; updated `test_can_edit_issued` to assert always-editable behavior. Full suite 134/134 passing.
+
+### v2.2 — OCR Improvement Module (Feb 2026)
 - **Dual confidence scoring**: every line item now carries `llm_confidence` (Gemini self-rated, 0..1), `heuristic_confidence` (rule-based: qty/HSN/desc/unit validity), and a weighted `confidence` (default 60% LLM + 40% heuristic, configurable via `OCR_CONFIDENCE_LLM_WEIGHT`). Invoice-level averages of the same three exposed in API + UI.
 - **Match-source tracking**: every parsed row now flagged with `match_source` ∈ {alias, sku, name, manual, null} and `auto_matched_alias` boolean. Vendor alias engine remains the top-priority matcher.
 - **Validation engine sharpened**: HSN regex tightened to `\d{4,8}`. Added `unit_valid` (soft warning, not a commit blocker). Per-row `warnings[]` surfaces machine-readable codes (`missing_hsn`, `invalid_qty`, `missing_unit`, ...).
