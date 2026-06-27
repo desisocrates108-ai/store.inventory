@@ -169,11 +169,11 @@ backend:
 frontend:
   - task: "Sticker module routes + sidebar entry"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/App.js, frontend/src/components/Layout.jsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         - working: "NA"
           agent: "main"
@@ -181,14 +181,19 @@ frontend:
             Three new routes: /stickers (gallery + history), /stickers/designer/:id?,
             /stickers/batch-print. Layout sidebar gets a 'Sticker Printing' entry
             (Tag icon, visible to super_admin/hub_accountant/warehouse_manager).
+        - working: true
+          agent: "testing"
+          comment: |
+            ✅ T1 PASS — nav-sticker-printing visible as super_admin, navigates to /stickers,
+            tab-templates and tab-history both present. No console errors.
 
   - task: "Sticker engine helper library (bwip-js + interpolation + canvas hydration)"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/lib/stickerEngine.js"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         - working: "NA"
           agent: "main"
@@ -197,14 +202,20 @@ frontend:
             bindCanvasJson (walks a fabric JSON, substitutes text + regenerates barcode/QR
             images), mmToPx helpers, STICKER_FIELDS palette config, loadPreviewData.
             Supports formats: code128, ean13, ean8, upca, upce, qr, datamatrix, pdf417, code39.
+        - working: true
+          agent: "testing"
+          comment: |
+            ✅ Verified indirectly via T3/T4/T7 — barcode rendered correctly in designer
+            (Code128 bound to SKU), preview mode resolved {{sku}}→SAMPLE-001 + redrew
+            barcode, batch print rendered 4 stickers across 1 page successfully.
 
   - task: "Sticker Designer (fabric.js v6 Canva-style editor)"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/pages/StickerDesigner.jsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         - working: "NA"
           agent: "main"
@@ -219,14 +230,29 @@ frontend:
             • Save / Save As / Export Sample PDF (jsPDF at exact mm dimensions).
             Manual smoke test: created a 60×40mm template, added SKU + Name text fields
             + Code128 barcode → all rendered, save round-trip OK. Screenshot captured.
+        - working: true
+          agent: "testing"
+          comment: |
+            ✅ T2/T3/T4/T5 PASS:
+            T2 — New Template dialog created 'E2E Spark Plug Sticker' 60×40mm, redirected
+            to /stickers/designer/{id}, canvas rendered.
+            T3 — add-field-sku, add-field-name, add-field-mrp, add-barcode all worked; Layers
+            panel shows 4 objects; barcode bound to SKU via inspect-bind; save-btn → toast
+            'Template saved'; canvas_json persisted.
+            T4 — undo-btn/redo-btn functional; preview-btn toggled preview mode resolving
+            placeholders to SAMPLE-001 (screenshot captured).
+            T5 — export-pdf-btn fired download '<template_name>-preview.pdf' (note: spec
+            said 'sticker-' prefix; actual uses '<template>-preview.pdf' — non-blocking).
+            Note from tester: actual testids are add-text / add-barcode / save-btn /
+            preview-btn (not the *-btn suffixed names in the spec).
 
   - task: "Sticker Gallery + Print History page"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/pages/Stickers.jsx"
     stuck_count: 0
     priority: "medium"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         - working: "NA"
           agent: "main"
@@ -234,14 +260,23 @@ frontend:
             Two-tab page: Templates (card grid with type/dims/object-count + Edit/Duplicate/Print/Delete actions)
             and Print History (audit log table: when / template / user / strategy / output / counts / printer).
             'New Template' dialog → POST /sticker-templates then redirect to designer.
+        - working: true
+          agent: "testing"
+          comment: |
+            ✅ T6/T8/CLEANUP PASS:
+            T6 — dup-tpl-{id} created duplicate with '(copy)' suffix.
+            T8 — tab-history showed 2 rows for E2E template (HTML + PDF, strategy Custom,
+            products=2, stickers=4). Rows use job-{id} testids (no print-history-table wrapper).
+            CLEANUP — del-tpl-{id} for both original + copy soft-deleted them; gallery no
+            longer lists either id.
 
   - task: "Sticker Batch Print page"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/pages/StickerBatchPrint.jsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         - working: "NA"
           agent: "main"
@@ -255,6 +290,20 @@ frontend:
               chosen layout — works with any printer driver.
             • PDF export uses jsPDF at exact mm.
             • Each Print/PDF call POSTs /sticker-print-jobs (audit).
+        - working: true
+          agent: "testing"
+          comment: |
+            ✅ T7 PASS:
+            • Template selector + 2 products added (SPK-BAJ-001, SPK-HER-002).
+            • bp-strategy=one_each → bp-total-stickers=2.
+            • Switched to Custom → bp-qty-{sku} enabled (note: keyed by sku, not productId);
+              changing one row to 3 made bp-total-stickers update live to 4 without reload.
+            • generate-btn → toast 'Rendered 4 stickers across 1 page(s)', print-area visible.
+            • pdf-btn → download 'stickers-E2E_Spark_Plug_Sticker.pdf' (prefix matches spec).
+            • print-btn → window.print invoked (stubbed in test).
+            • Audit verification: GET /api/sticker-print-jobs?template_id={id} count 0→2
+              (one HTML + one PDF job logged). ✅
+            T9 — Throughout entire flow: 0 console errors, 0 5xx, 0 unexpected 4xx.
 
 metadata:
   created_by: "main_agent"
@@ -284,6 +333,23 @@ agent_communication:
         ✅ Preview-data binding (3 tests) - Sample data, Real product data, 404 handling, No path-conflict bug
         ✅ Print Jobs audit log (6 tests) - Create, List, Filter, Reprint payload, Role access
         ✅ Existing pytest suite (2 tests) - 142 tests still passing
+    - agent: "testing"
+      message: |
+        ✅ V2.5 Phase 2 Sticker/Label Module FRONTEND E2E COMPLETE — T1–T9 + CLEANUP all PASS (100%).
+        Auth: admin@servall.com / Admin@123.
+        Created E2E template ('E2E Spark Plug Sticker' 60×40mm small_product) → added SKU/Name/MRP
+        text + Code128 barcode → saved → undo/redo + preview verified → designer PDF exported →
+        duplicated in gallery → batch-print: 2 products, switched one_each→custom, qty 1+3=4,
+        generate rendered 4 stickers/1 page → PDF + Print fired, audit log delta +2 confirmed →
+        history tab shows 2 rows → both templates soft-deleted in cleanup.
+        Zero console errors, zero 5xx, zero unexpected 4xx.
+        
+        Minor (non-blocking) observations recorded:
+        - Palette-added fields share default coords (20,20) → stack visually until user drags.
+        - Designer PDF filename uses '<template>-preview.pdf' (spec said 'sticker-' prefix);
+          batch-print PDF correctly uses 'stickers-' prefix.
+        - Actual testids: add-text / add-barcode / save-btn / preview-btn / bp-qty-{sku} /
+          job-{id} (slight drift from spec testid names; functionality unaffected).
         
         CRITICAL VERIFICATIONS:
         • Default values: dpi=203, canvas_json={"version":"6","objects":[]}, active=true ✅
