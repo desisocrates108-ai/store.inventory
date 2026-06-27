@@ -104,6 +104,27 @@ async def seed_demo_data(db):
                         if not fr.get("tier_id"):
                             await db.franchises.update_one({"id": fr["id"]}, {"$set": {"tier_id": std_tier["id"]}})
 
+        # V2.6 — idempotent top-up: ensure org_settings has the GST identity
+        # fields the E-Way Bill module expects on the FROM block.
+        org = await db.org_settings.find_one({"id": "org-settings"}) or {}
+        org_defaults = {
+            "id": "org-settings",
+            "legal_name": "Servall Pvt Ltd",
+            "gstin": "29AAACS9999A1Z5",
+            "address_line1": "Plot 12, Industrial Suburb",
+            "address_line2": "Yeshwantpur",
+            "city": "Bengaluru",
+            "state": "Karnataka",
+            "state_code": "29",
+            "pincode": "560022",
+        }
+        org_patch = {k: v for k, v in org_defaults.items() if not org.get(k)}
+        if org_patch:
+            await db.org_settings.update_one(
+                {"id": "org-settings"}, {"$set": org_patch}, upsert=True,
+            )
+            logger.info("org_settings topped up with GST identity fields: %s", list(org_patch.keys()))
+
         existing_users = await db.users.count_documents({})
         if existing_users > 0:
             logger.info("Demo data already seeded, skipping.")

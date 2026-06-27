@@ -1,73 +1,89 @@
-# PRD — Servall ERP · V2.5 Phase 2 — Sticker / Label Module
+# PRD — Servall ERP
 
-## Original Problem Statement
-V2.5 Phase 2 — Sticker / Label Module (independent of inventory) for Servall ERP.
-Features F7–F15 from the user spec:
-- F7  — Left-nav "Sticker Printing" module.
-- F8  — fabric.js drag/resize/rotate designer (grid, zoom, undo/redo, layers, align, duplicate, preview, print).
-- F9  — Auto product data binding via {{placeholders}} resolved against /sticker-templates/preview-data.
-- F10 — Batch printing with strategies: 1 per product / inventory_qty / custom.
-- F11 — Printer-agnostic architecture (window.print + PDF export now; ZPL/EPL deferred).
-- F12 — Template library (CRUD + Save As / duplicate / soft delete).
-- F13 — Barcode + QR via bwip-js (Code128, EAN13, EAN8, UPC-A, UPC-E, Code39, QR).
-- F14 — Print history audit log (sticker_print_jobs collection).
-- F15 — Reusable engine: stickerEngine.js (frontend) + routers_stickers.py (backend) as independent modules.
+## Latest Module (V2.6 — E-Way Bill, added 2026-06-27)
 
-User's final ask in this session: **"testing is remaining so you just have to test"** — frontend E2E only.
+### Original Problem Statement
+"NEW FEATURE — COMPLETE E-WAY BILL MODULE (Enterprise Grade)" — fully integrated
+E-Way Bill module (not just a PDF). Must auto-fill from a linked Tax Invoice or
+Delivery Challan, support sequential numbering (`EWB-YYYY-000001`), generate a
+government-style PDF with QR + Code128 barcode, expose a search/filter screen,
+enforce role-based access, and be designed for future NIC E-Way Bill API
+integration without rewriting.
 
-## Architecture
-- Backend: FastAPI + MongoDB (motor). New router `routers_stickers.py` mounted at `/api/sticker-templates` and `/api/sticker-print-jobs`. Audit logging via existing `audit_logs` collection.
-- Frontend: React 19 + react-router + shadcn/ui. Pages `Stickers.jsx`, `StickerDesigner.jsx`, `StickerBatchPrint.jsx`. Shared engine `lib/stickerEngine.js` wraps fabric.js v6, bwip-js, jsPDF.
-- Auth: JWT (existing) with roles super_admin / hub_accountant / warehouse_manager / franchise_manager.
+### Architecture
+- **Backend collection**: `eway_bills`. Pydantic `EWayBill` model lives in
+  `backend/models.py` with `EWayBillPartyBlock` + `EWayBillLineItem` snapshot
+  sub-models so source-doc edits never silently mutate an active EWB.
+- **Router**: `backend/routers_eway_bills.py` — mounted at `/api/eway-bills`.
+- **Provider abstraction**: `EWB_PROVIDER` env var (default `LOCAL`). Two
+  injection points — `generate_number()` and `push_to_provider()` — are the
+  only edits required to wire the official NIC API later.
+- **Numbering**: counters collection `eway_bill_{year}` → `EWB-YYYY-000001`.
+- **Validity**: 1 day per 200 km, minimum 1 day.
+- **PDF**: ReportLab — 5 sections (EWB Meta, FROM, TO, Goods, Transport) + a
+  footer with QR (encodes EBN+invoice+supplier GSTIN+recipient GSTIN+vehicle+date)
+  and a Code128 barcode of the EBN. Auto-switches between CGST/SGST and IGST
+  columns based on the source totals.
+- **Backlinks**: when an EWB is created, `tax_invoices.eway_bill_id` /
+  `delivery_challans.eway_bill_id` are updated so the source doc's UI can show
+  "View E-Way Bill (EBN)" instead of "Generate".
 
-## User Personas
-- super_admin — full access; only role that can soft-delete templates.
-- hub_accountant — create/update templates, print, view history.
-- warehouse_manager — create/update templates, print, view history.
-- franchise_manager — print + view history only (no template CRUD).
+### Endpoints
+| Method | Path                                            | Roles                                                 |
+|-------:|-------------------------------------------------|-------------------------------------------------------|
+| GET    | `/api/eway-bills`                               | all (franchise sees only own)                         |
+| POST   | `/api/eway-bills/from-invoice/{tid}`            | super_admin / warehouse_manager / hub_accountant       |
+| POST   | `/api/eway-bills/from-challan/{dcid}`           | super_admin / warehouse_manager / hub_accountant       |
+| GET    | `/api/eway-bills/{eid}`                         | all (franchise scoping)                                |
+| PUT    | `/api/eway-bills/{eid}`                         | super_admin / warehouse_manager / hub_accountant       |
+| POST   | `/api/eway-bills/{eid}/cancel`                  | super_admin / hub_accountant                           |
+| POST   | `/api/eway-bills/{eid}/duplicate`               | super_admin / warehouse_manager / hub_accountant       |
+| GET    | `/api/eway-bills/{eid}/pdf`                     | all (franchise scoping)                                |
+| GET    | `/api/eway-bills/by-invoice/{tid}`              | all                                                   |
+| GET    | `/api/eway-bills/by-challan/{dcid}`             | all                                                   |
 
-## Core Requirements (static)
-- Templates store fabric `canvas_json` (version 6), width_mm, height_mm, dpi (default 203), sticker_type, active flag.
-- `preview-data` route must be declared before `/{tid}` to avoid path-conflict.
-- Print job records: template_id, qty_strategy, output_format (html|pdf|zpl|epl), printer_label, product_ids, total_stickers, user_id/user_name, ip_address, created_at.
-- Batch print supports A4 grid (auto cols/rows based on template mm) AND one-sticker-per-page (thermal labels) via `@page` media query.
-- Audit log is immutable (templates are deletable; print-job rows are not).
+### Frontend
+- **Sidebar**: new `E-Way Bills` entry (Truck icon) under the existing
+  invoicing section. Visible to all roles; the API enforces scope.
+- **Page** `/eway-bills` — `EWayBills.jsx` — filterable list (search, vehicle,
+  transporter, status, date range) with per-row Download / Print / Duplicate /
+  Cancel actions (Duplicate + Cancel hidden for franchise users).
+- **Reusable dialog** `EWayBillDialog.jsx` — used from `EWayBills.jsx`,
+  `TaxInvoiceDetail.jsx`, and the DC detail dialog. Auto-fills the snapshot
+  (supplier, recipient, items, totals) and only lets the user edit transport
+  details (vehicle, transporter, GSTIN/ID, LR, distance, mode, reason,
+  remarks). Save / Save & Regenerate / Download / Close in the footer.
+- **Tax Invoice page** — adds `Generate E-Way Bill` button on
+  issued/paid/non-cancelled invoices; flips to `View E-Way Bill (EBN)` once one
+  exists.
+- **Delivery Challan dialog** — same generate/view button at the bottom.
 
-## What's Been Implemented (as of 27-Jun-2026)
-**Backend** (21/21 tests passing):
-- ✅ Sticker Templates CRUD + duplicate (`/api/sticker-templates`)
-- ✅ Preview-data binding endpoint (`/api/sticker-templates/preview-data`)
-- ✅ Print Jobs audit log endpoints (`/api/sticker-print-jobs` + `/{jid}/reprint-payload`)
-- ✅ Role-based access controls
-- ✅ Soft-delete via active flag
-- ✅ Existing 142-test pytest suite untouched and passing
+### Test Status (iteration_7)
+- **Backend**: 11/11 pytest cases pass (`/app/backend/tests/test_eway_bills.py`).
+- **Frontend**: 100 % of exercised flows pass. F4 was partially blocked by the
+  seed having only a draft tax invoice; addressed below.
 
-**Frontend** (T1–T9 + CLEANUP all passing, 100%):
-- ✅ Sidebar entry + 3 routes (`/stickers`, `/stickers/designer/:id?`, `/stickers/batch-print`)
-- ✅ stickerEngine.js (bwip-js + interpolation + canvas hydration)
-- ✅ Sticker Designer with fabric.js v6 (undo/redo, preview, layers, inspector, save, PDF export)
-- ✅ Sticker Gallery + Print History tabs
-- ✅ Batch Print page (template + strategy + product picker + generate + PDF + window.print + audit POST)
+### Post-test fixes (idempotent seed top-up)
+1. `seed.py` now upserts `org_settings` with GSTIN
+   `29AAACS9999A1Z5`, state_code `29`, pincode `560022`, etc., so newly created
+   DC-sourced EWBs include the supplier GSTIN. New EWB `EWB-2026-000035`
+   verified to carry the supplier GSTIN on the snapshot.
+2. The single seeded tax invoice (`TI/2026-27/0001`) is now issued
+   (status=`issued`) so the F4 `generate-ewb-btn` path is exercisable end-to-end.
 
-## Prioritized Backlog
-**P2 (UX polish — non-blocking, called out by testing agent):**
-- Stagger default Y position when palette adds a new field/text/barcode (e.g., last_added_y + 20) so they don't all stack at (20,20).
-- Unify PDF filename prefix between designer-preview (`<template>-preview.pdf`) and batch-print (`stickers-<template>.pdf`).
-- Align spec testid names with code: add-text-btn vs add-text, save-template-btn vs save-btn, preview-toggle vs preview-btn, bp-qty-{productId} vs bp-qty-{sku}, print-history-table vs job-{id} rows. Either rename code or update spec docs.
+### Backlog (deferred enhancements from test_report critical_code_review)
+- P3 — collapse `update_eway_bill()` two-step write into a single `$set`.
+- P3 — split `_render_eway_bill_pdf()` into its own `eway_bill_pdf.py` module
+  for readability (file is currently ~895 lines).
+- P3 — decide policy on duplicate's parent backlink (currently duplicate keeps
+  the original EWB as the active backlink on the source doc; could be flipped
+  to point at the newest active EWB).
+- P2 — when EWB_PROVIDER is flipped to `NIC_API`, wire the real submission +
+  status polling inside `generate_number()` + `push_to_provider()`.
 
-**P1 (deferred from F11):**
-- ZPL/EPL native printer output (currently HTML+PDF only).
-
-**P0:** None. Module is production-ready.
+## Earlier modules
+- **V2.5 P2 Sticker / Label Module** — complete and verified (T1–T9 + cleanup,
+  100 % pass). See sticker section in `test_result.md`.
 
 ## Test Credentials
 See `/app/memory/test_credentials.md`.
-
-## Last Action (27-Jun-2026)
-Codebase restored from GitHub `desisocrates108-ai/store.inventory` (workspace had only starter kit).
-Backend + frontend services restarted, seed data loaded. Testing agent ran full frontend E2E:
-T1–T9 + CLEANUP all PASS, 0 console errors, 0 5xx, audit-log delta verified.
-
-## Next Action Items
-1. (Optional) Address the three P2 UX polish items above.
-2. (When ready) Begin Phase 3 — ZPL/EPL printer output (F11 follow-up).

@@ -473,3 +473,12 @@ agent_communication:
         embeds QR (encodes EBN+invoice+GSTINs+vehicle) + Code128 barcode of the EBN.
         Sequential numbering EWB-YYYY-000001. Franchise users see only their own
         EWBs (read-only). Pls run focused tests as below.
+    - agent: "main"
+      message: |
+        Post-test fixes for the 2 minor items flagged in iteration_7:
+        1. Idempotent seed top-up added in seed.py — org_settings now upserts
+           GSTIN/state_code/pincode on startup. Verified new EWB-2026-000035
+           carries supplier.gstin=29AAACS9999A1Z5 + state_code=29 + pincode=560022.
+        2. Seeded tax invoice TI/2026-27/0001 issued (status=issued) so the
+           Tax-Invoice generate-ewb-btn path (F4) is now exercisable end-to-end.
+        Both items were seed-data gaps, not code defects (per testing agent's RCA).
