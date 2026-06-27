@@ -32,6 +32,7 @@ import DebitNoteDetail from "@/pages/DebitNoteDetail";
 import Stickers from "@/pages/Stickers";
 import StickerDesigner from "@/pages/StickerDesigner";
 import StickerBatchPrint from "@/pages/StickerBatchPrint";
+import EWayBills from "@/pages/EWayBills";
 import "@/App.css";
 
 function RequireAuth({ children }) {
@@ -77,6 +78,7 @@ function App() {
               <Route path="/stickers/batch-print" element={<RequireAuth><StickerBatchPrint /></RequireAuth>} />
               <Route path="/stickers/designer" element={<RequireAuth><StickerDesigner /></RequireAuth>} />
               <Route path="/stickers/designer/:id" element={<RequireAuth><StickerDesigner /></RequireAuth>} />
+              <Route path="/eway-bills" element={<RequireAuth><EWayBills /></RequireAuth>} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </BrowserRouter>

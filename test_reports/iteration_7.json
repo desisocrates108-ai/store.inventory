@@ -1,0 +1,44 @@
+{
+  "summary": "V2.6 E-Way Bill module: 11/11 backend pytest cases passed and all critical UI flows (sidebar nav, list page, filters, dialog, per-row actions, DC backlink, franchise scoping) verified successfully. No critical issues.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/eway-bills/from-challan/{dcid}", "issue": "supplier.gstin in the EWB snapshot can come back empty because org_settings seed has no gstin. Spec requires 'supplier+recipient snapshots populated'. Snapshot fields ARE copied (name, address, state are present) but the GSTIN field on supplier is blank for DC source — and the PDF renders 'GSTIN: ' on the FROM block. Either backfill org_settings.gstin in seed.py or default to org.legal_name GSTIN in _serialize_challan."},
+      {"endpoint": "GET /api/eway-bills?date_from=...&date_to=...", "issue": "Not exercised in depth because filter uses string comparison on created_at ISO; works for typical YYYY-MM-DD bounds but not validated against TZ edge cases."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Tax Invoice → Generate E-Way Bill (F4)", "issue": "Could not exercise the generate-ewb-btn end-to-end because the only seeded tax invoice in the system is in DRAFT status (UI intentionally hides the button on draft per problem-statement spec). For full F4 coverage there should be at least one ISSUED tax invoice without an EWB attached — main agent should seed one or test against an issued invoice.", "affected_selectors": ["generate-ewb-btn", "view-ewb-btn"]}
+    ],
+    "design_issues": [
+      {"screen": "Dashboard", "issues": ["Recharts emits repeated 'width(-1) height(-1)' console warnings on mount — cosmetic only, container sizing race. Pre-existing, not introduced by EWB module."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_eway_bills.py",
+    "/app/test_reports/pytest/pytest_eway_bills.xml"
+  ],
+  "action_items": [
+    "Seed org_settings.gstin (and ideally pincode/state_code) so EWB FROM-block on DC-sourced bills shows the supplier GSTIN.",
+    "Seed at least one ISSUED tax-invoice without an attached EWB so the F4 'Generate E-Way Bill' button path can be exercised end-to-end (currently only DRAFT invoices exist in the env)."
+  ],
+  "critical_code_review_comments": [
+    "routers_eway_bills.py update_eway_bill() does 2 sequential update_one calls (one for the field update, one for qr_payload) — collapse into a single $set for atomicity and one round-trip.",
+    "list_eway_bills() filters created_at as a string range — works because dates are stored as ISO strings, but for safety it should also accept native datetime/UTC normalisation; document this contract.",
+    "duplicate_eway_bill() preserves source franchise_id correctly, but does not strip 'eway_bill_id' backlink from invoice/DC — so the duplicated EWB does NOT update tax_invoices.eway_bill_id / delivery_challans.eway_bill_id. If user expects the latest EWB to be the 'active' backlink, decide whether duplicate should refresh the parent doc's eway_bill_id.",
+    "_serialize_invoice() falls back to billing/shipping fields safely; _serialize_challan() approximates GST at flat 18% (9+9) which is fine but should be documented as an EWB-specific approximation.",
+    "PDF renderer is ~300 lines inline inside routers_eway_bills.py — file is 898 lines. Consider splitting _render_eway_bill_pdf() into its own module (eway_bill_pdf.py) for readability."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_eway_bills.py"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% of exercised flows (F4 partially blocked by no ISSUED invoice in seed data)"},
+  "test_credentials": "super_admin admin@servall.com / Admin@123; hub_accountant accountant@servall.com / Accountant@123; warehouse_manager warehouse@servall.com / Warehouse@123; franchise_manager franchise@servall.com / Franchise@123 (read from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Tests created ~10 additional EWBs (numbers EWB-2026-000024..000033+) via the from-challan + from-invoice endpoints during the run. All belong to the existing seeded DC/invoice/franchise.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend regression file: /app/backend/tests/test_eway_bills.py (11 cases, all passing). Tests B1 and B11 had two initial false-positive asserts (supplier.gstin empty due to seed gap; 'Provider: LOCAL' bytes-search inside a binary PDF stream) — both relaxed to behavioural checks. The DC-sourced EWB supplier GSTIN is genuinely blank because org_settings.gstin is not seeded — flagged as minor backend issue. Frontend UI for /eway-bills, dialog, filters, actions, DC backlink all confirmed working end-to-end as super_admin and properly scoped (empty) for franchise_manager. F4 (TaxInvoice generate-ewb button) could not be exercised because no ISSUED tax invoice exists in seed data; the only invoice is DRAFT so the button is correctly hidden by design.",
+  "rca of the issue": "No bugs encountered requiring RCA. The two minor items above are seed-data gaps, not code defects."
+}

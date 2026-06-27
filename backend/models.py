@@ -749,3 +749,115 @@ class StickerPrintJob(BaseModel):
     ip_address: str = ""
     notes: str = ""
     created_at: str = Field(default_factory=now_iso)
+
+
+# ============================================================================
+# V2.6 — E-WAY BILL MODULE (independent, integrates with Tax Invoice + Challan)
+# ============================================================================
+# Architecture note:
+#   - Provider-agnostic. `provider` defaults to "LOCAL" (numbers issued by us);
+#     a future "NIC_API" provider can be plugged in by replacing the number
+#     generation + status update calls in the router. No model changes needed.
+#   - Auto-filled from a linked Tax Invoice or Delivery Challan — supplier/
+#     recipient/items/totals are snapshotted at creation time so a later edit
+#     to the source invoice does NOT silently mutate the e-way bill.
+
+EWayBillTransportMode = Literal["road", "rail", "air", "ship"]
+EWayBillReason = Literal[
+    "supply", "sales_return", "export", "import", "job_work", "skd", "ckd", "others"
+]
+EWayBillStatus = Literal["draft", "active", "cancelled"]
+EWayBillProvider = Literal["LOCAL", "NIC_API"]
+
+
+class EWayBillPartyBlock(BaseModel):
+    """Snapshot of one side (supplier or recipient) of the consignment."""
+    model_config = ConfigDict(extra="ignore")
+    gstin: str = ""
+    name: str = ""
+    address: str = ""
+    state: str = ""
+    state_code: str = ""
+    pincode: str = ""
+
+
+class EWayBillLineItem(BaseModel):
+    """Snapshot of one item on the e-way bill."""
+    model_config = ConfigDict(extra="ignore")
+    product_id: Optional[str] = None
+    sku: str = ""
+    description: str = ""
+    hsn: str = ""
+    qty: float = 0.0
+    unit: str = "PCS"
+    taxable_value: float = 0.0
+    gst_percent: float = 18.0
+    cgst_amount: float = 0.0
+    sgst_amount: float = 0.0
+    igst_amount: float = 0.0
+    line_total: float = 0.0
+
+
+class EWayBill(BaseModel):
+    """E-Way Bill — generated from a Tax Invoice or Delivery Challan."""
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=gen_id)
+    # Sequential public number, e.g. "EWB-2026-000001"
+    eway_number: str = ""
+    provider: EWayBillProvider = "LOCAL"
+    status: EWayBillStatus = "active"
+
+    # Source linkage — at least ONE of (invoice_id, challan_id) is set.
+    invoice_id: Optional[str] = None
+    invoice_number: Optional[str] = None
+    challan_id: Optional[str] = None
+    dc_number: Optional[str] = None
+    franchise_id: Optional[str] = None
+
+    # Document meta (snapshot of the source doc)
+    transaction_type: str = "Regular"        # Regular / Bill-To-Ship-To etc.
+    document_type: str = "Tax Invoice"       # "Tax Invoice" | "Delivery Challan"
+    document_number: str = ""
+    document_date: str = ""
+
+    # Parties (snapshot — do NOT auto-mutate after creation)
+    supplier: EWayBillPartyBlock = Field(default_factory=EWayBillPartyBlock)
+    recipient: EWayBillPartyBlock = Field(default_factory=EWayBillPartyBlock)
+
+    # Goods (snapshot)
+    line_items: List[EWayBillLineItem] = []
+    subtotal: float = 0.0
+    cgst_total: float = 0.0
+    sgst_total: float = 0.0
+    igst_total: float = 0.0
+    grand_total: float = 0.0
+
+    # Transport details (user-entered)
+    transporter_name: str = ""
+    transporter_gstin: str = ""
+    transporter_id: str = ""               # 15-char NIC transporter id
+    lr_number: str = ""                    # LR / RR / Airway Bill no.
+    vehicle_number: str = ""
+    vehicle_type: str = "Regular"          # Regular / Over-Dimensional Cargo
+    transport_mode: EWayBillTransportMode = "road"
+    distance_km: float = 0.0
+    reason: EWayBillReason = "supply"
+    remarks: str = ""
+
+    # Validity (computed: 1 day per 200 km for road; min 1 day)
+    valid_from: str = ""
+    valid_upto: str = ""
+
+    # Optional cached artefacts (data URLs / paths). PDF is re-rendered on demand;
+    # we only cache QR text + barcode value so they stay stable across re-renders.
+    qr_payload: str = ""                   # plain text encoded into the QR
+    barcode_value: str = ""                # the eway_number itself
+    generated_pdf_path: str = ""           # filled if we ever write to disk; not required
+
+    # Audit
+    created_by: str = ""
+    created_by_name: str = ""
+    created_at: str = Field(default_factory=now_iso)
+    updated_at: str = Field(default_factory=now_iso)
+    cancelled_at: Optional[str] = None
+    cancelled_reason: str = ""

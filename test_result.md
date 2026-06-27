@@ -394,3 +394,82 @@ agent_communication:
            franchise_manager all allowed) — print history isn't restricted by role.
         9. Existing 142-test pytest suite must still be 142 passed:
            `cd /app/backend && MONGO_URL=mongodb://localhost:27017 DB_NAME=servall_erp_test python3 -m pytest tests/ -x -q`
+
+# ============================================================================
+# V2.6 — E-WAY BILL MODULE (added 2026-06-27)
+# ============================================================================
+backend:
+  - task: "E-Way Bill model + provider abstraction + CRUD + PDF endpoints"
+    implemented: true
+    working: "NA"
+    file: "backend/models.py, backend/routers_eway_bills.py, backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            New EWayBill model + collection. Endpoints under /api/eway-bills:
+              GET    /api/eway-bills                              (q, vehicle, transporter, status, franchise_id, date_from/to)
+              POST   /api/eway-bills/from-invoice/{tid}            create from Tax Invoice (snapshot)
+              POST   /api/eway-bills/from-challan/{dcid}           create from Delivery Challan (snapshot)
+              GET    /api/eway-bills/{eid}                         get one (franchise scoping)
+              PUT    /api/eway-bills/{eid}                         edit transport details only
+              POST   /api/eway-bills/{eid}/cancel                  cancel (super_admin/hub_accountant)
+              POST   /api/eway-bills/{eid}/duplicate               clone (new EBN)
+              GET    /api/eway-bills/{eid}/pdf                     render PDF (QR + Code128)
+              GET    /api/eway-bills/by-invoice/{tid}              backlink lookup
+              GET    /api/eway-bills/by-challan/{dcid}             backlink lookup
+
+            Numbering: sequential EWB-YYYY-000001 via counters collection.
+            Validity: 1 day per 200 km, min 1 day.
+            Provider abstraction: EWB_PROVIDER env var (default LOCAL); generate_number() +
+            push_to_provider() are the only injection points for future NIC_API.
+            Smoke-tested via curl: from-challan, from-invoice, update, duplicate, cancel,
+            by-invoice backlink, PDF (15.8 KB, valid %PDF-1.4 header) — all 200.
+
+frontend:
+  - task: "E-Way Bill module — list page, dialog component, invoice + DC integration, sidebar entry"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/EWayBills.jsx, frontend/src/components/EWayBillDialog.jsx, frontend/src/pages/TaxInvoiceDetail.jsx, frontend/src/pages/DeliveryChallans.jsx, frontend/src/components/Layout.jsx, frontend/src/App.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Sidebar: new entry 'E-Way Bills' (Truck icon) visible to all roles
+            (franchise gets read-only via API).
+            New route /eway-bills → EWayBills.jsx (filterable list with search,
+            vehicle, transporter, status, date-range; per-row actions: Download PDF,
+            Print, Duplicate, Cancel).
+            Reusable EWayBillDialog (auto-fills supplier/recipient/items/totals from
+            linked invoice or challan; user only enters vehicle, transporter, GSTIN/ID,
+            LR, distance, mode, reason, remarks).
+            TaxInvoiceDetail: new 'Generate E-Way Bill' button on issued/paid invoices,
+            flips to 'View E-Way Bill (EBN)' if one exists.
+            DeliveryChallans: same button inside the DC detail dialog.
+            Quick screenshot confirmed the page loads with 5 EWBs and all actions
+            visible; backend list endpoint returns 200; create-from-DC + create-from-
+            invoice + duplicate + cancel + PDF all confirmed via curl.
+
+test_plan:
+  current_focus:
+    - "E-Way Bill model + provider abstraction + CRUD + PDF endpoints"
+    - "E-Way Bill module — list page, dialog component, invoice + DC integration, sidebar entry"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+  run_ui: true
+
+agent_communication:
+    - agent: "main"
+      message: |
+        V2.6 E-Way Bill module added. Backend uses provider abstraction (LOCAL now,
+        NIC_API ready), snapshots supplier/recipient/items from source doc, PDF
+        embeds QR (encodes EBN+invoice+GSTINs+vehicle) + Code128 barcode of the EBN.
+        Sequential numbering EWB-YYYY-000001. Franchise users see only their own
+        EWBs (read-only). Pls run focused tests as below.

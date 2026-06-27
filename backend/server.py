@@ -1445,6 +1445,11 @@ routers_stickers.init(db)
 # router already declares its /api prefix internally, so include without re-prefixing
 app.include_router(routers_stickers.router)
 
+# V2.6 — E-Way Bill Module (independent, integrates with Tax Invoice + Delivery Challan)
+import routers_eway_bills  # noqa: E402
+routers_eway_bills.init(db=db, log_audit_fn=log_audit)
+app.include_router(routers_eway_bills.router, prefix="/api")
+
 # Serve uploaded files
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 

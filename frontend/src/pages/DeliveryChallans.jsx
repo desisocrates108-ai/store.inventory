@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Truck, QrCode, Receipt, FilePdf, WhatsappLogo } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import DateFilter, { dateQuery } from "@/components/DateFilter";
+import EWayBillDialog from "@/components/EWayBillDialog";
 
 const STATUS_COLOR = {
   draft: "bg-zinc-500/10 text-zinc-600 border-zinc-500/30",
@@ -18,6 +19,8 @@ export default function DeliveryChallans() {
   const [list, setList] = useState([]);
   const [open, setOpen] = useState(null);
   const [dateRange, setDateRange] = useState({ preset: "all", from: "", to: "" });
+  const [ewbOpen, setEwbOpen] = useState(false);
+  const [existingEwb, setExistingEwb] = useState(null);
 
   useEffect(() => {
     const q = dateQuery(dateRange);
@@ -47,6 +50,17 @@ export default function DeliveryChallans() {
     } catch (e) {
       toast.error("Failed to build share link");
     }
+  };
+
+  // ---- E-Way Bill integration ----
+  const openEwbForDc = async (dc) => {
+    try {
+      const r = await api.get(`/eway-bills/by-challan/${dc.id}`, { headers: { "x-silent": "1" } });
+      setExistingEwb(r.data && r.data.id ? r.data : null);
+    } catch (_) {
+      setExistingEwb(null);
+    }
+    setEwbOpen(true);
   };
 
   return (
@@ -162,10 +176,44 @@ export default function DeliveryChallans() {
                   </div>
                 </div>
               )}
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-border">
+                {open.eway_bill_id || open.eway_bill_number ? (
+                  <Button
+                    onClick={() => openEwbForDc(open)}
+                    data-testid={`dc-view-ewb-${open.dc_number}`}
+                  >
+                    <Truck size={14} className="mr-1" />
+                    View E-Way Bill ({open.eway_bill_number})
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => openEwbForDc(open)}
+                    data-testid={`dc-gen-ewb-${open.dc_number}`}
+                  >
+                    <Truck size={14} className="mr-1" />
+                    Generate E-Way Bill
+                  </Button>
+                )}
+              </div>
             </div>
           )}
         </DialogContent>
       </Dialog>
+
+      {open && (
+        <EWayBillDialog
+          open={ewbOpen}
+          onOpenChange={(o) => { setEwbOpen(o); if (!o) setExistingEwb(null); }}
+          source={{ type: "challan", id: open.id, number: open.dc_number }}
+          existing={existingEwb}
+          onSaved={(ewb) => {
+            setExistingEwb(ewb);
+            // refresh DC so backlink shows up
+            api.get(`/delivery-challans/${open.id}`).then((r) => setOpen(r.data));
+          }}
+        />
+      )}
     </div>
   );
 }

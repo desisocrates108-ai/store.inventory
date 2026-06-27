@@ -13,8 +13,9 @@ import {
 import { toast } from "sonner";
 import {
   ArrowLeft, FloppyDisk, CheckCircle, Prohibit, FilePdf, EnvelopeSimple, Printer, WhatsappLogo,
-  Plus, X, MagnifyingGlass, CurrencyInr, Lightning, EyeSlash,
+  Plus, X, MagnifyingGlass, CurrencyInr, Lightning, EyeSlash, Truck,
 } from "@phosphor-icons/react";
+import EWayBillDialog from "@/components/EWayBillDialog";
 
 const STATUS_BADGE = {
   draft: { label: "DRAFT", cls: "bg-amber-500/10 text-amber-600 border-amber-500/30" },
@@ -38,6 +39,9 @@ export default function TaxInvoiceDetail() {
   const [cancelReason, setCancelReason] = useState("");
   const [showProdPickerIdx, setShowProdPickerIdx] = useState(null);
   const [showFranchisePicker, setShowFranchisePicker] = useState(false);
+  // E-Way Bill integration
+  const [ewbOpen, setEwbOpen] = useState(false);
+  const [existingEwb, setExistingEwb] = useState(null);
   // Customer-facing PDF: hide discount column?  Default = hide (show_discount=false).
   // Persisted in sessionStorage so a user's preference holds across invoices in the same session.
   const [showDiscount, setShowDiscount] = useState(() => {
@@ -96,6 +100,11 @@ export default function TaxInvoiceDetail() {
       } else {
         const r = await api.get(`/tax-invoices/${id}`);
         setInv(r.data);
+        // Lookup any existing E-Way Bill for this invoice
+        try {
+          const eb = await api.get(`/eway-bills/by-invoice/${id}`, { headers: { "x-silent": "1" } });
+          setExistingEwb(eb.data && eb.data.id ? eb.data : null);
+        } catch (_) { setExistingEwb(null); }
       }
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to load");
@@ -334,6 +343,26 @@ export default function TaxInvoiceDetail() {
               <CheckCircle size={14} className="mr-2" /> Mark Paid
             </Button>
           )}
+          {inv.id && inv.status !== "cancelled" && inv.status !== "draft" && (
+            existingEwb ? (
+              <Button
+                variant="outline"
+                onClick={() => setEwbOpen(true)}
+                data-testid="view-ewb-btn"
+              >
+                <Truck size={14} className="mr-2" />
+                View E-Way Bill ({existingEwb.eway_number})
+              </Button>
+            ) : (
+              <Button
+                onClick={() => { setExistingEwb(null); setEwbOpen(true); }}
+                data-testid="generate-ewb-btn"
+              >
+                <Truck size={14} className="mr-2" />
+                Generate E-Way Bill
+              </Button>
+            )
+          )}
           {inv.id && inv.status !== "cancelled" && (
             <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
               <DialogTrigger asChild>
@@ -507,6 +536,17 @@ export default function TaxInvoiceDetail() {
           </div>
         </div>
       </div>
+
+      {/* E-Way Bill dialog (generate / view / edit) */}
+      {inv.id && (
+        <EWayBillDialog
+          open={ewbOpen}
+          onOpenChange={setEwbOpen}
+          source={{ type: "invoice", id: inv.id, number: inv.invoice_number }}
+          existing={existingEwb}
+          onSaved={(ewb) => setExistingEwb(ewb)}
+        />
+      )}
     </div>
   );
 }
