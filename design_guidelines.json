@@ -1,0 +1,92 @@
+{
+  "theme": "LIGHT",
+  "archetype": "4 (Swiss & High-Contrast)",
+  "design_philosophy": "Apple-level Minimalism + Notion-like Cleanliness + Zoho-scale Robustness. High density, structural grid, touch-optimized (min 44x44px targets).",
+  "colors": {
+    "light": {
+      "background": "#FFFFFF",
+      "surface": "#F4F4F5",
+      "border": "#E4E4E7",
+      "text_primary": "#09090B",
+      "text_secondary": "#52525B",
+      "primary_accent": "#09090B",
+      "secondary_accent": "#2563EB",
+      "success": "#16A34A",
+      "warning": "#EAB308",
+      "danger": "#DC2626"
+    },
+    "dark": {
+      "background": "#000000",
+      "surface": "#09090B",
+      "border": "#27272A",
+      "text_primary": "#FAFAFA",
+      "text_secondary": "#A1A1AA",
+      "primary_accent": "#FFFFFF",
+      "secondary_accent": "#3B82F6",
+      "success": "#22C55E",
+      "warning": "#FACC15",
+      "danger": "#EF4444"
+    }
+  },
+  "typography": {
+    "heading_font": "Outfit",
+    "body_font": "Manrope",
+    "scales": {
+      "h1": "text-4xl sm:text-5xl tracking-tight font-semibold",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-medium",
+      "h3": "text-xl sm:text-2xl font-medium",
+      "body": "text-base leading-relaxed",
+      "small": "text-sm uppercase tracking-[0.2em]"
+    }
+  },
+  "spacing_and_layout": {
+    "grid_strategy": "Control Room Grid (Dense, Data Correlation). Base Grid: grid-cols-1 md:grid-cols-3 lg:grid-cols-4. Tight gaps (gap-4 or gap-6).",
+    "touch_targets": "Minimum 44x44px for all interactive elements (buttons, checkboxes, table rows) to accommodate tablet mechanics.",
+    "padding_scale": "p-4, p-6, p-8. Containers with borders must have internal padding (p-6) to prevent text collision."
+  },
+  "components": {
+    "cards": "Subtle roundness (max 8px border-radius) or cardless sharp edges. 1px solid borders, no soft shadows. Flat solid surfaces.",
+    "tables": "Dense. Sortable columns. High contrast row borders. Row status text. Touch-friendly row height (min 44px).",
+    "buttons": "High contrast. Hover states must explicitly set text color (e.g. hover:bg-zinc-800 hover:text-white).",
+    "navigation": "Sticky nav with Crystal Glass (backdrop-blur-xl bg-white/70) and 1px bottom border.",
+    "inputs": "Shadcn standard inputs heavily customized to remove generic look. Sharp borders, clear focus rings (focus:ring-2 focus:ring-black)."
+  },
+  "motion_and_interactions": {
+    "hover_states": "Crisp transitions. -translate-y-[1px] on cards, subtle shadow.",
+    "animations": "Minimalist. Meaningful micro-interactions for feedback. Tab transitions, modal entrances.",
+    "accessibility": "Prefers-reduced-motion respected. Clear focus states."
+  },
+  "icons_and_assets": {
+    "icon_library": "@phosphor-icons/react",
+    "icon_style": "Duotone or Regular weight. Dense dashboard suitability."
+  },
+  "media_urls": [
+    {
+      "category": "background",
+      "url": "https://images.unsplash.com/photo-1644079446600-219068676743?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTV8MHwxfHNlYXJjaHwxfHx3YXJlaG91c2UlMjBzaGVsdmVzfGVufDB8fHx8MTc3OTk1MTQ0M3ww&ixlib=rb-4.1.0&q=85",
+      "description": "Warehouse shelves background for login/landing page"
+    },
+    {
+      "category": "auto_parts_visual",
+      "url": "https://images.unsplash.com/photo-1486262715619-67b85e0b08d3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzB8MHwxfHNlYXJjaHwyfHxhdXRvJTIwcGFydHN8ZW58MHx8fHwxNzc5OTUxNDQzfDA&ixlib=rb-4.1.0&q=85",
+      "description": "Auto parts imagery for blank states or context"
+    },
+    {
+      "category": "company_logo",
+      "url": "https://images.unsplash.com/photo-1620288627223-53302f4e8c74?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODF8MHwxfHNlYXJjaHwyfHxjb21wYW55JTIwbG9nb3xlbnwwfHx8fDE3Nzk5NTE0NDh8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Brand logo placeholder"
+    }
+  ],
+  "instructions_to_main_agent": [
+    "Install and use @phosphor-icons/react for all icons.",
+    "Use Shadcn components for all interactive logic (tables, inputs, dialogs, etc.).",
+    "Implement pure HTML+Tailwind for complex grid layouts (Control Room grid style).",
+    "Ensure dual-mode (light/dark) is flawless, using Tailwind dark: variants.",
+    "Implement Cmd+K search using Shadcn Command menu.",
+    "Charts must use Recharts or Shadcn Chart components (Stacked bar for aging matrix).",
+    "Ensure all interactive elements have data-testid attributes for testing.",
+    "Do NOT use 'Inter' for headings. Ensure Outfit (or similar geometric/grotesque sans) is applied via Tailwind.",
+    "DO NOT use teal or purple as primary colors. Stick to the high-contrast monochromatic base with blue/red operational accents.",
+    "Ensure touch targets (min 44x44px) are enforced across the app, especially in tables and menus."
+  ]
+}

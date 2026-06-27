@@ -1,0 +1,47 @@
+{
+  "summary": "Tested the new Indent fulfillment workflow + RBAC masking + audit trail (backend) and Indents/Dashboard pages (frontend) for warehouse and franchise roles. All 19 backend tests in test_fulfillment_workflow.py passed: partial -> partial -> full fulfillment chain, validation (exceeds pending, all-zero rejected), reject + notification, pending-stock summary with hub_available/can_now_fulfill, stock-movements immutability (qty_after == qty_before + delta), franchise 403 on stock-movements & pending-stock, products masking for franchise role, dashboard is_franchise branch hides total_stock_value/low_stock_count/outstanding_payments, indent scoping to own franchise, dispatch after partial generates DC with only allocated items, full happy path (fulfill -> dispatch -> deliver) creates >= 4 stock movements. Frontend Warehouse view: 6-column Kanban (Pending Review/Partially Allocated/Awaiting Stock/Ready to Dispatch/Dispatched/Delivered) all rendered, Smart Fulfillment modal opens with Hub Stock column, Auto-fill Max button correctly populates min(pending, hub_stock) qty inputs (verified 3 and 2 set), Reject dialog opens with reason textarea. Frontend Franchise Indents view: card grid only (no kanban), no 'Hub Stock' / 'hub_stock' text leaked anywhere, 17 own indents shown, Raise Indent CTA present.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/auth/me", "issue": "Returns 403 instead of 401 when Authorization header missing (cosmetic, FastAPI HTTPBearer default)"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Dashboard (franchise role)", "issue": "Page renders the admin 'Mission Control' layout with labels HUB STOCK VALUE / LOW STOCK SKUS / VENDOR OUTSTANDING / AVG FULFILLMENT / VENDORS / FRANCHISES even for franchise_manager. Backend correctly returns is_franchise:true with minimal payload, but the frontend Dashboard page does NOT branch on it — it just shows ₹0 / 'undefined%' / 'undefined delivered'. This is both a visual bug (undefined values) and a confidentiality bug (label names themselves leak business categories the franchise should not see).", "selector": "Dashboard route /", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard (franchise)", "issues": ["'undefined%' and 'undefined delivered' literal strings rendered in AVG FULFILLMENT card due to missing fields", "Recharts width(-1) console warnings repeatedly emitted on dashboard load (container size race) — purely a perf/log warning"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_fulfillment_workflow.py",
+    "/app/backend/tests/test_servall_backend.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_fulfillment.xml"
+  ],
+  "action_items": [
+    "HIGH: Update frontend Dashboard.jsx (or equivalent) to branch on stats.is_franchise === true and render a franchise-specific layout that ONLY shows my_pending / my_fulfilled / my_dispatched / my_delivered / trend_7d. Do NOT render Hub Stock Value, Low Stock SKUs, Vendor Outstanding, Avg Fulfillment, Products, Vendors, Franchises tiles or 'Top Moving Products' for franchise_manager. Currently those tiles render with ₹0/'undefined%' which both breaks UX and leaks admin label vocabulary.",
+    "Stale test file /app/backend/tests/test_servall_backend.py still calls the removed POST /api/indents/{id}/approve in TestIndentsLifecycle.test_approve_indent and will fail if run after this refactor. Main agent should either delete that legacy file or migrate it to call /fulfill. (Did not touch it to keep this iteration's scope focused.)",
+    "Cosmetic: in adjust_stock the location_label for hub is hardcoded 'Hub Main' — fine, but Storage of dispatch outbound currently writes stock_movement on dispatch? No — dispatch only generates DC, not stock movement; the outflow happens at fulfill. Document this clearly to avoid confusion."
+  ],
+  "critical_code_review_comments": [
+    "Backend masking is solid: /api/products and /api/products/{id} both whitelist FRANCHISE_SAFE_KEYS — verified via test that hub_stock/franchise_stock/total_stock/landing_price/margin_percent/safety_stock/reorder_qty/low_stock/primary_vendor_id are all absent in franchise responses.",
+    "Frontend Dashboard does not respect the is_franchise flag — this is the single highest-priority issue. Backend did its job; the frontend page is stuck on the admin layout.",
+    "Indents.jsx already has the role branch (line 292: franchise simple grid; line 362: warehouse Kanban) — Dashboard.jsx should follow the same pattern.",
+    "Stock movement audit chain integrity (qty_after == qty_before + delta) confirmed via test on real records.",
+    "server.py is now ~1239 lines — recommend splitting into routers (auth, indents, stock, dashboard, reports). Same comment as previous iteration.",
+    "FulfillRequest accepts items=[] silently; the all-zero-qty check raises 400 only after iterating line_items, which is fine, but a stricter Pydantic validator (min_items=1, fulfill_qty>=0) would shift validation earlier."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_fulfillment_workflow.py"
+  ],
+  "success_rate": {"backend": "100% (19/19 new + previous 35 still applicable except 1 stale approve test)", "frontend": "Indents page (warehouse + franchise): 100%. Dashboard page (franchise role): FAIL — admin layout shown."},
+  "test_credentials": "All 4 demo accounts verified working from /app/memory/test_credentials.md",
+  "seed_data_creation": "Tests create fresh indents per test using the first stocked franchise+products; no cleanup performed but data uses 'TEST fulfillment workflow' note. Multiple new indents (IND-001x..001y) added to system; safe because counts use >=.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend fulfillment workflow is fully verified. Re-test after main agent fixes the franchise Dashboard branching: login as franchise@servall.com, go to /dashboard, ensure NO 'Hub Stock Value' / 'Low Stock SKUs' / 'Vendor Outstanding' / 'Avg Fulfillment' / 'Vendors' / 'Franchises' / 'Top Moving Products' tiles are visible and only my_pending/my_fulfilled/my_dispatched/my_delivered + trend chart show. Also delete or migrate /app/backend/tests/test_servall_backend.py::TestIndentsLifecycle::test_approve_indent because /api/indents/{id}/approve no longer exists.",
+  "rca of the issue": "Franchise Dashboard leak RCA: backend /api/dashboard/stats already returns the correct franchise-scoped payload with is_franchise=true (verified by passing test TestDashboardMasking.test_franchise_dashboard_minimal). The bug is purely in the frontend Dashboard page which always renders the admin tile layout regardless of stats.is_franchise. Reproduction: login as franchise@servall.com -> navigate /dashboard -> observe HUB STOCK VALUE ₹0, AVG FULFILLMENT 'undefined%', VENDOR OUTSTANDING ₹0 tiles. Mitigation: in Dashboard.jsx add `if (stats?.is_franchise) return <FranchiseDashboard stats={stats} />;` and create a FranchiseDashboard that renders only the personal indent counts + trend chart, mirroring how Indents.jsx already branches on role."
+}
